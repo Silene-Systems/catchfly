@@ -88,6 +88,9 @@ line-length = 99
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH"]
 
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["E501"]
+
 [tool.mypy]
 python_version = "3.10"
 strict = true

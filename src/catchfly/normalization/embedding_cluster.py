@@ -155,11 +155,12 @@ class EmbeddingClustering(BaseModel):
         umap_mod = _import_umap()
 
         n_samples = matrix.shape[0]
-        n_components = min(self.umap_n_components, n_samples - 1)
-        if n_components < 2:
-            logger.debug("Too few samples for UMAP reduction, skipping")
+        # UMAP needs enough samples to build a meaningful neighborhood graph
+        if n_samples < 10:
+            logger.debug("Too few samples (%d) for UMAP reduction, skipping", n_samples)
             return matrix
 
+        n_components = min(self.umap_n_components, n_samples - 1)
         n_neighbors = min(15, n_samples - 1)
 
         logger.debug(

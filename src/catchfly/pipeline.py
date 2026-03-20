@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from catchfly._compat import run_sync
@@ -96,6 +98,7 @@ class Pipeline:
         normalize_fields: list[str] | None = None,
         max_cost_usd: float | None = None,
         schema: type[BaseModel] | None = None,
+        checkpoint_dir: str | Path | None = None,
         **kwargs: Any,
     ) -> PipelineResult:
         """Run the full pipeline asynchronously.
@@ -106,26 +109,36 @@ class Pipeline:
             normalize_fields: Fields to normalize (None = skip normalization).
             max_cost_usd: Budget limit — pipeline halts if exceeded.
             schema: Pre-existing Pydantic model — skips discovery if provided.
+            checkpoint_dir: Directory for checkpoint state (enables resume).
         """
         tracker = UsageTracker(max_cost_usd=max_cost_usd)
         result = PipelineResult()
+        checkpoint = _Checkpoint(checkpoint_dir) if checkpoint_dir else None
 
         try:
             # --- Discovery ---
-            discovered_schema: Schema | None = None
             extraction_model: type[BaseModel] | None = schema
 
             if schema is None and self.discovery is not None:
-                logger.info("Pipeline: starting discovery")
-                discovered_schema = await self.discovery.adiscover(
-                    documents, domain_hint=domain_hint
-                )
-                result.schema = discovered_schema
-                extraction_model = discovered_schema.model
-                logger.info(
-                    "Pipeline: discovery complete — %d fields",
-                    len(discovered_schema.json_schema.get("properties", {})),
-                )
+                # Check checkpoint for saved schema
+                saved_schema = checkpoint.load_schema() if checkpoint else None
+                if saved_schema is not None:
+                    logger.info("Pipeline: loaded schema from checkpoint")
+                    result.schema = saved_schema
+                    extraction_model = saved_schema.model
+                else:
+                    logger.info("Pipeline: starting discovery")
+                    discovered_schema = await self.discovery.adiscover(
+                        documents, domain_hint=domain_hint
+                    )
+                    result.schema = discovered_schema
+                    extraction_model = discovered_schema.model
+                    if checkpoint:
+                        checkpoint.save_schema(discovered_schema)
+                    logger.info(
+                        "Pipeline: discovery complete — %d fields",
+                        len(discovered_schema.json_schema.get("properties", {})),
+                    )
             elif schema is not None:
                 result.schema = Schema(
                     model=schema,
@@ -135,10 +148,38 @@ class Pipeline:
 
             # --- Extraction ---
             if extraction_model is not None and self.extraction is not None:
-                logger.info("Pipeline: starting extraction on %d documents", len(documents))
-                extraction_result = await self.extraction.aextract(extraction_model, documents)
-                result.records = extraction_result.records
-                result.errors = extraction_result.errors
+                # Check checkpoint for already-processed docs
+                processed_ids = checkpoint.load_processed_ids() if checkpoint else set()
+                remaining_docs = [d for d in documents if (d.id or "") not in processed_ids]
+
+                if remaining_docs:
+                    logger.info(
+                        "Pipeline: extracting %d documents (%d already processed)",
+                        len(remaining_docs),
+                        len(processed_ids),
+                    )
+                    extraction_result = await self.extraction.aextract(
+                        extraction_model, remaining_docs
+                    )
+
+                    # Save new records to checkpoint
+                    if checkpoint:
+                        for record in extraction_result.records:
+                            checkpoint.append_record(record)
+                        for doc in remaining_docs:
+                            if doc.id:
+                                checkpoint.mark_processed(doc.id)
+
+                    result.records = extraction_result.records
+                    result.errors = extraction_result.errors
+                else:
+                    logger.info("Pipeline: all documents already processed (checkpoint)")
+
+                # Load previously checkpointed records
+                if checkpoint and processed_ids:
+                    prev_records = checkpoint.load_records()
+                    result.records = prev_records + result.records
+
                 logger.info(
                     "Pipeline: extraction complete — %d records, %d errors",
                     len(result.records),
@@ -156,8 +197,10 @@ class Pipeline:
                     "Pipeline: starting normalization for fields: %s",
                     normalize_fields,
                 )
+                # Pass field_metadata from schema to normalization (for seed_from_schema)
+                schema_metadata = result.schema.field_metadata if result.schema else {}
                 result.normalizations = await self._normalize_fields(
-                    result.records, normalize_fields
+                    result.records, normalize_fields, schema_metadata
                 )
                 logger.info(
                     "Pipeline: normalization complete — %d fields normalized",
@@ -179,6 +222,7 @@ class Pipeline:
         normalize_fields: list[str] | None = None,
         max_cost_usd: float | None = None,
         schema: type[BaseModel] | None = None,
+        checkpoint_dir: str | Path | None = None,
         **kwargs: Any,
     ) -> PipelineResult:
         """Run the full pipeline synchronously."""
@@ -189,6 +233,7 @@ class Pipeline:
                 normalize_fields=normalize_fields,
                 max_cost_usd=max_cost_usd,
                 schema=schema,
+                checkpoint_dir=checkpoint_dir,
                 **kwargs,
             )
         )
@@ -204,10 +249,9 @@ class Pipeline:
         avg_tokens = sum(len(d.content) // 4 for d in documents) / max(n_docs, 1)
         n_chunks = estimate_chunks(documents)
 
-        # Very rough estimates based on typical token counts
-        discovery_cost = avg_tokens * 6 / 1_000_000 * 0.15  # ~6 docs, mini pricing
+        discovery_cost = avg_tokens * 6 / 1_000_000 * 0.15
         extraction_cost = n_chunks * avg_tokens * 2 / 1_000_000 * 0.15
-        normalization_cost = n_docs * 0.001  # embedding costs are low
+        normalization_cost = n_docs * 0.001
 
         return {
             "discovery": round(discovery_cost, 4),
@@ -220,13 +264,18 @@ class Pipeline:
         self,
         records: list[Any],
         fields: list[str],
+        schema_metadata: dict[str, Any] | None = None,
     ) -> dict[str, NormalizationResult]:
-        """Normalize specified fields from extracted records."""
+        """Normalize specified fields from extracted records.
+
+        If schema_metadata is provided and the normalization strategy
+        supports field_metadata (e.g. KLLMeansClustering with
+        seed_from_schema), it will be passed through.
+        """
         assert self.normalization is not None
         normalizations: dict[str, NormalizationResult] = {}
 
         for field_name in fields:
-            # Collect unique values for this field from all records
             values: list[str] = []
             for record in records:
                 val = None
@@ -243,7 +292,10 @@ class Pipeline:
                     values.append(str(val))
 
             if not values:
-                logger.debug("Pipeline: no values found for field '%s', skipping", field_name)
+                logger.debug(
+                    "Pipeline: no values found for field '%s', skipping",
+                    field_name,
+                )
                 continue
 
             logger.info(
@@ -252,8 +304,122 @@ class Pipeline:
                 len(values),
                 len(set(values)),
             )
+
+            # Pass field-specific metadata if available
+            normalize_kwargs: dict[str, Any] = {}
+            if schema_metadata and field_name in schema_metadata:
+                normalize_kwargs["field_metadata"] = schema_metadata[field_name]
+
             normalizations[field_name] = await self.normalization.anormalize(
-                values, context_field=field_name
+                values, context_field=field_name, **normalize_kwargs
             )
 
         return normalizations
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint support
+# ---------------------------------------------------------------------------
+
+
+class _Checkpoint:
+    """Manages pipeline checkpoint state on disk.
+
+    Files:
+    - schema.json — discovered schema
+    - records.jsonl — extracted records (one per line, append-safe)
+    - state.json — set of processed document IDs
+    """
+
+    def __init__(self, directory: str | Path) -> None:
+        self._dir = Path(directory)
+        self._dir.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def _schema_path(self) -> Path:
+        return self._dir / "schema.json"
+
+    @property
+    def _records_path(self) -> Path:
+        return self._dir / "records.jsonl"
+
+    @property
+    def _state_path(self) -> Path:
+        return self._dir / "state.json"
+
+    def save_schema(self, schema: Schema) -> None:
+        """Persist discovered schema."""
+        data = {
+            "json_schema": schema.json_schema,
+            "field_metadata": schema.field_metadata,
+            "lineage": schema.lineage,
+        }
+        self._schema_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        logger.debug("Checkpoint: saved schema to %s", self._schema_path)
+
+    def load_schema(self) -> Schema | None:
+        """Load schema from checkpoint, or None if not found."""
+        if not self._schema_path.exists():
+            return None
+
+        try:
+            data = json.loads(self._schema_path.read_text(encoding="utf-8"))
+            import contextlib
+
+            from catchfly.schema.converters import json_schema_to_pydantic
+
+            json_schema = data["json_schema"]
+            model = None
+            with contextlib.suppress(Exception):
+                model = json_schema_to_pydantic(json_schema, "CheckpointSchema")
+
+            return Schema(
+                model=model,
+                json_schema=json_schema,
+                field_metadata=data.get("field_metadata", {}),
+                lineage=data.get("lineage", []),
+            )
+        except Exception:
+            logger.warning("Checkpoint: failed to load schema", exc_info=True)
+            return None
+
+    def append_record(self, record: Any) -> None:
+        """Append a single record to the JSONL file."""
+        if hasattr(record, "model_dump"):
+            data = record.model_dump()
+        elif isinstance(record, dict):
+            data = record
+        else:
+            data = {"_raw": str(record)}
+
+        with open(self._records_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(data, default=str) + "\n")
+
+    def load_records(self) -> list[dict[str, Any]]:
+        """Load all records from checkpoint JSONL."""
+        if not self._records_path.exists():
+            return []
+
+        records: list[dict[str, Any]] = []
+        for line in self._records_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+        return records
+
+    def mark_processed(self, doc_id: str) -> None:
+        """Mark a document ID as processed."""
+        ids = self.load_processed_ids()
+        ids.add(doc_id)
+        self._state_path.write_text(json.dumps(sorted(ids), indent=2), encoding="utf-8")
+
+    def load_processed_ids(self) -> set[str]:
+        """Load the set of already-processed document IDs."""
+        if not self._state_path.exists():
+            return set()
+
+        try:
+            data = json.loads(self._state_path.read_text(encoding="utf-8"))
+            return set(data) if isinstance(data, list) else set()
+        except Exception:
+            return set()

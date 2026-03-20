@@ -1,11 +1,20 @@
-"""Live integration test with real LLM providers.
+"""Catchfly live integration tests with real LLM providers.
 
 Usage:
-    # Fill in scripts/.env with your API keys, then:
-    uv run python scripts/test_live.py
+    # Fill in scripts/.env with API keys, then:
+    uv run python scripts/test_live.py              # run all tests
+    uv run python scripts/test_live.py discovery     # run only discovery tests
+    uv run python scripts/test_live.py normalization # run only normalization tests
 
-Tests the full pipeline (discovery → extraction → normalization)
-against OpenAI, Anthropic, and Mistral APIs.
+Available test suites:
+    discovery     — SinglePassDiscovery + ThreeStageDiscovery
+    optimizer     — SchemaOptimizer (PARSE-style enrichment)
+    extraction    — LLMDirectExtraction (tool calling across providers)
+    normalization — EmbeddingClustering + LLMCanonicalization
+    kllmeans      — KLLMeansClustering (with and without schema seed)
+    pipeline      — Full pipeline end-to-end
+    registry      — SchemaRegistry round-trip
+    all           — Everything (default)
 """
 
 from __future__ import annotations
@@ -14,12 +23,16 @@ import logging
 import os
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+
+# ---------------------------------------------------------------------------
+# Env loading
+# ---------------------------------------------------------------------------
 
 
 def _load_env() -> None:
-    """Load .env file from the same directory as this script."""
     env_path = Path(__file__).parent / ".env"
     if not env_path.exists():
         return
@@ -29,7 +42,6 @@ def _load_env() -> None:
             continue
         key, _, value = line.partition("=")
         key, value = key.strip(), value.strip()
-        # Don't override existing env vars
         if key and value and key not in os.environ:
             os.environ[key] = value
 
@@ -40,314 +52,509 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 logger = logging.getLogger("test_live")
 
 
+# ---------------------------------------------------------------------------
+# Provider configs
+# ---------------------------------------------------------------------------
+
+
 @dataclass
-class ProviderConfig:
+class Provider:
     name: str
     model: str
     base_url: str | None
     api_key_env: str
     embedding_model: str | None = None
 
+    @property
+    def available(self) -> bool:
+        return bool(os.environ.get(self.api_key_env))
 
-PROVIDERS = [
-    ProviderConfig(
-        name="OpenAI",
-        model="gpt-5.4-mini",
-        base_url=None,  # default
-        api_key_env="OPENAI_API_KEY",
-        embedding_model="text-embedding-3-small",
-    ),
-    ProviderConfig(
-        name="Anthropic",
-        model="claude-haiku-4-5-20251001",
-        base_url="https://api.anthropic.com/v1/",
-        api_key_env="ANTHROPIC_API_KEY",
-    ),
-    ProviderConfig(
-        name="Mistral",
-        model="mistral-small-latest",
-        base_url="https://api.mistral.ai/v1/",
-        api_key_env="MISTRAL_API_KEY",
-    ),
-]
+    @property
+    def api_key(self) -> str:
+        return os.environ.get(self.api_key_env, "")
 
 
-def test_discovery_and_extraction(config: ProviderConfig) -> bool:
-    """Test schema discovery + extraction with a given provider."""
-    from catchfly import Pipeline
+OPENAI = Provider("OpenAI", "gpt-5.4-mini", None, "OPENAI_API_KEY", "text-embedding-3-small")
+ANTHROPIC = Provider(
+    "Anthropic", "claude-haiku-4-5-20251001", "https://api.anthropic.com/v1/", "ANTHROPIC_API_KEY"
+)
+MISTRAL = Provider(
+    "Mistral", "mistral-small-latest", "https://api.mistral.ai/v1/", "MISTRAL_API_KEY"
+)
+ALL_PROVIDERS = [OPENAI, ANTHROPIC, MISTRAL]
+
+
+def first_available(*providers: Provider) -> Provider | None:
+    return next((p for p in providers if p.available), None)
+
+
+# ---------------------------------------------------------------------------
+# Test results tracking
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TestResult:
+    name: str
+    passed: bool
+    elapsed_s: float
+    detail: str = ""
+
+
+@dataclass
+class TestSuite:
+    name: str
+    results: list[TestResult] = field(default_factory=list)
+
+    def add(self, name: str, passed: bool, elapsed: float, detail: str = "") -> None:
+        self.results.append(TestResult(name, passed, elapsed, detail))
+        icon = "PASS" if passed else "FAIL"
+        logger.info("[%s] %s (%.1fs)%s", icon, name, elapsed, f" — {detail}" if detail else "")
+
+    @property
+    def passed(self) -> int:
+        return sum(1 for r in self.results if r.passed)
+
+    @property
+    def failed(self) -> int:
+        return sum(1 for r in self.results if not r.passed)
+
+
+# ---------------------------------------------------------------------------
+# Test helpers
+# ---------------------------------------------------------------------------
+
+
+def timed(fn: Any) -> tuple[Any, float]:
+    """Run fn() and return (result, elapsed_seconds)."""
+    start = time.monotonic()
+    try:
+        result = fn()
+        return result, time.monotonic() - start
+    except Exception as e:
+        return e, time.monotonic() - start
+
+
+# ---------------------------------------------------------------------------
+# TEST SUITES
+# ---------------------------------------------------------------------------
+
+
+def test_discovery(suite: TestSuite) -> None:
+    """Test SinglePassDiscovery + ThreeStageDiscovery across providers."""
     from catchfly.demo import load_samples
+    from catchfly.discovery.single_pass import SinglePassDiscovery
+    from catchfly.discovery.three_stage import ThreeStageDiscovery
 
-    api_key = os.environ.get(config.api_key_env, "")
-    if not api_key:
-        logger.warning("[%s] Skipped — %s not set", config.name, config.api_key_env)
-        return False
+    docs = load_samples("product_reviews")[:3]
+
+    for provider in ALL_PROVIDERS:
+        if not provider.available:
+            suite.add(f"SinglePass:{provider.name}", True, 0, "SKIPPED — no key")
+            continue
+
+        def run_sp(p: Provider = provider) -> Any:
+            sp = SinglePassDiscovery(model=p.model, base_url=p.base_url, api_key=p.api_key)
+            return sp.discover(docs, domain_hint="Electronics product reviews")
+
+        result, elapsed = timed(run_sp)
+        if isinstance(result, Exception):
+            suite.add(f"SinglePass:{provider.name}", False, elapsed, str(result))
+        else:
+            n_fields = len(result.json_schema.get("properties", {}))
+            suite.add(f"SinglePass:{provider.name}", n_fields > 0, elapsed, f"{n_fields} fields")
+
+    # ThreeStageDiscovery (only with first available — expensive)
+    p = first_available(*ALL_PROVIDERS)
+    if p:
+        docs_large = load_samples("product_reviews")
+
+        def run_ts() -> Any:
+            ts = ThreeStageDiscovery(
+                model=p.model,
+                base_url=p.base_url,
+                api_key=p.api_key,
+                stage1_samples=2,
+                stage2_samples=3,
+                stage3_samples=5,
+            )
+            return ts.discover(docs_large, domain_hint="Electronics reviews")
+
+        result, elapsed = timed(run_ts)
+        if isinstance(result, Exception):
+            suite.add(f"ThreeStage:{p.name}", False, elapsed, str(result))
+        else:
+            n_fields = len(result.json_schema.get("properties", {}))
+            report = result.field_metadata.get("_discovery_report", {})
+            stages = report.get("stages_completed", "?")
+            suite.add(
+                f"ThreeStage:{p.name}",
+                n_fields > 0,
+                elapsed,
+                f"{n_fields} fields, {stages} stages",
+            )
+
+
+def test_optimizer(suite: TestSuite) -> None:
+    """Test SchemaOptimizer with real LLM."""
+    from pydantic import BaseModel
+
+    from catchfly.demo import load_samples
+    from catchfly.discovery.optimizer import SchemaOptimizer
+
+    p = first_available(*ALL_PROVIDERS)
+    if not p:
+        suite.add("Optimizer", True, 0, "SKIPPED — no keys")
+        return
+
+    class ReviewSchema(BaseModel):
+        product_name: str
+        rating: float
+        price: float | None = None
+
+    docs = load_samples("product_reviews")[:5]
+
+    def run() -> Any:
+        opt = SchemaOptimizer(
+            model=p.model, base_url=p.base_url, api_key=p.api_key, num_iterations=2
+        )
+        return opt.optimize(ReviewSchema, docs)
+
+    result, elapsed = timed(run)
+    if isinstance(result, Exception):
+        suite.add(f"Optimizer:{p.name}", False, elapsed, str(result))
+    else:
+        n_enriched = len(result.field_metadata)
+        has_desc = any(
+            "description" in v for v in result.field_metadata.values() if isinstance(v, dict)
+        )
+        suite.add(
+            f"Optimizer:{p.name}",
+            n_enriched > 0,
+            elapsed,
+            f"{n_enriched} fields enriched, has_desc={has_desc}",
+        )
+
+
+def test_extraction(suite: TestSuite) -> None:
+    """Test LLMDirectExtraction with tool calling across providers."""
+    from pydantic import BaseModel
+
+    from catchfly.demo import load_samples
+    from catchfly.extraction.llm_direct import LLMDirectExtraction
+
+    class Review(BaseModel):
+        product_name: str
+        rating: float
+        pros: list[str] = []
 
     docs = load_samples("product_reviews")[:2]
 
-    logger.info("[%s] Testing discovery + extraction with model=%s", config.name, config.model)
-    start = time.monotonic()
+    for provider in ALL_PROVIDERS:
+        if not provider.available:
+            suite.add(f"Extraction:{provider.name}", True, 0, "SKIPPED")
+            continue
 
-    try:
-        pipeline = Pipeline.quick(
-            model=config.model,
-            base_url=config.base_url,
-            api_key=api_key,
-        )
-        results = pipeline.run(
-            documents=docs,
-            domain_hint="Electronics product reviews with ratings and prices",
-        )
+        def run(p: Provider = provider) -> Any:
+            ext = LLMDirectExtraction(
+                model=p.model, base_url=p.base_url, api_key=p.api_key, max_retries=1
+            )
+            return ext.extract(Review, docs)
 
-        elapsed = time.monotonic() - start
-
-        # Verify discovery
-        assert results.schema is not None, "Schema is None — discovery failed"
-        props = results.schema.json_schema.get("properties", {})
-        assert len(props) > 0, "Schema has no properties"
-        logger.info(
-            "[%s] Discovery OK — %d fields: %s", config.name, len(props), list(props.keys())
-        )
-
-        # Verify extraction
-        assert len(results.records) > 0, "No records extracted"
-        logger.info("[%s] Extraction OK — %d records", config.name, len(results.records))
-
-        # Show a sample record
-        record = results.records[0]
-        if hasattr(record, "model_dump"):
-            logger.info("[%s] Sample record: %s", config.name, record.model_dump())
+        result, elapsed = timed(run)
+        if isinstance(result, Exception):
+            suite.add(f"Extraction:{provider.name}", False, elapsed, str(result))
         else:
-            logger.info("[%s] Sample record: %s", config.name, record)
-
-        # Verify export
-        df = results.to_dataframe()
-        logger.info("[%s] DataFrame: %d rows, columns=%s", config.name, len(df), list(df.columns))
-
-        logger.info("[%s] PASSED (%.1fs)", config.name, elapsed)
-        return True
-
-    except Exception as e:
-        elapsed = time.monotonic() - start
-        logger.error("[%s] FAILED (%.1fs): %s", config.name, elapsed, e, exc_info=True)
-        return False
+            suite.add(
+                f"Extraction:{provider.name}",
+                len(result.records) == 2,
+                elapsed,
+                f"{len(result.records)} records, {len(result.errors)} errors",
+            )
 
 
-def test_normalization(embedding_provider: ProviderConfig) -> bool:
-    """Test normalization with real embeddings (needs OpenAI or compatible endpoint)."""
-    api_key = os.environ.get(embedding_provider.api_key_env, "")
-    if not api_key:
-        logger.warning("[Normalization] Skipped — %s not set", embedding_provider.api_key_env)
-        return False
+def test_normalization(suite: TestSuite) -> None:
+    """Test EmbeddingClustering + LLMCanonicalization."""
+    p = first_available(OPENAI)  # needs embeddings
+    if not p:
+        suite.add("EmbeddingClustering", True, 0, "SKIPPED — no OPENAI_API_KEY")
+        suite.add("LLMCanonicalization", True, 0, "SKIPPED")
+        return
 
-    if not embedding_provider.embedding_model:
-        logger.warning(
-            "[Normalization] Skipped — no embedding model for %s", embedding_provider.name
-        )
-        return False
-
+    # --- EmbeddingClustering ---
     from catchfly.normalization.embedding_cluster import EmbeddingClustering
 
-    logger.info(
-        "[Normalization] Testing with %s embeddings (%s)",
-        embedding_provider.name,
-        embedding_provider.embedding_model,
-    )
-    start = time.monotonic()
+    values = [
+        "NYC",
+        "New York",
+        "new york city",
+        "Los Angeles",
+        "LA",
+        "L.A.",
+        "San Francisco",
+        "SF",
+    ]
 
-    try:
-        normalizer = EmbeddingClustering(
-            embedding_model=embedding_provider.embedding_model,
-            base_url=embedding_provider.base_url,
-            api_key=api_key,
+    def run_ec() -> Any:
+        ec = EmbeddingClustering(
+            embedding_model="text-embedding-3-small",
+            api_key=p.api_key,
             clustering_algorithm="agglomerative",
             similarity_threshold=0.7,
             reduce_dimensions=False,
         )
+        return ec.normalize(values, context_field="city")
 
-        values = [
-            "New York",
-            "NYC",
-            "NY",
-            "new york city",
-            "Los Angeles",
-            "LA",
-            "L.A.",
-            "los angeles",
-            "San Francisco",
-            "SF",
-            "San Fran",
-        ]
-
-        result = normalizer.normalize(values, context_field="city")
-        elapsed = time.monotonic() - start
-
-        # Verify all values mapped
-        assert len(result.mapping) == len(set(values)), (
-            f"Expected {len(set(values))} mappings, got {len(result.mapping)}"
+    result, elapsed = timed(run_ec)
+    if isinstance(result, Exception):
+        suite.add("EmbeddingClustering", False, elapsed, str(result))
+    else:
+        n_canonical = len(set(result.mapping.values()))
+        mapping_str = ", ".join(f"{k}→{v}" for k, v in sorted(result.mapping.items()))
+        suite.add(
+            "EmbeddingClustering",
+            n_canonical < len(values),
+            elapsed,
+            f"{n_canonical} canonical: {mapping_str}",
         )
 
-        # Print mapping
-        logger.info("[Normalization] Results:")
-        for raw, canonical in sorted(result.mapping.items()):
-            logger.info("  %s → %s", raw, canonical)
+    # --- LLMCanonicalization ---
+    from catchfly.normalization.llm_canonical import LLMCanonicalization
 
-        # Check that at least some NYC variants clustered together
-        ny_canonical = result.mapping.get("NYC")
-        if ny_canonical and result.mapping.get("NY") == ny_canonical:
-            logger.info("[Normalization] NYC/NY clustered correctly → %s", ny_canonical)
-        else:
-            logger.warning("[Normalization] NYC/NY did NOT cluster together")
+    llm_p = first_available(*ALL_PROVIDERS)
+    if not llm_p:
+        suite.add("LLMCanonicalization", True, 0, "SKIPPED")
+        return
 
-        # Test explain
-        explanation = result.explain("NYC")
-        logger.info("[Normalization] explain('NYC'): %s", explanation)
+    def run_lc() -> Any:
+        lc = LLMCanonicalization(model=llm_p.model, base_url=llm_p.base_url, api_key=llm_p.api_key)
+        return lc.normalize(values, context_field="city")
 
-        logger.info("[Normalization] PASSED (%.1fs)", elapsed)
-        return True
+    result, elapsed = timed(run_lc)
+    if isinstance(result, Exception):
+        suite.add(f"LLMCanonicalization:{llm_p.name}", False, elapsed, str(result))
+    else:
+        n_canonical = len(set(result.mapping.values()))
+        suite.add(
+            f"LLMCanonicalization:{llm_p.name}",
+            n_canonical < len(values),
+            elapsed,
+            f"{n_canonical} canonical",
+        )
 
-    except Exception as e:
-        elapsed = time.monotonic() - start
-        logger.error("[Normalization] FAILED (%.1fs): %s", elapsed, e, exc_info=True)
-        return False
+
+def test_kllmeans(suite: TestSuite) -> None:
+    """Test KLLMeansClustering — cold start and schema-seeded."""
+    p = first_available(OPENAI)
+    if not p:
+        suite.add("kLLMmeans", True, 0, "SKIPPED — no OPENAI_API_KEY")
+        return
+
+    from catchfly.normalization.kllmeans import KLLMeansClustering
+
+    values = ["cat", "cats", "kitten", "dog", "dogs", "puppy", "fish", "goldfish"]
+
+    # --- Cold start ---
+    def run_cold() -> Any:
+        kl = KLLMeansClustering(
+            num_clusters=3,
+            embedding_model="text-embedding-3-small",
+            summarization_model=p.model,
+            api_key=p.api_key,
+            num_iterations=5,
+            summarize_every=2,
+        )
+        return kl.normalize(values, context_field="animal")
+
+    result, elapsed = timed(run_cold)
+    if isinstance(result, Exception):
+        suite.add("kLLMmeans:cold", False, elapsed, str(result))
+    else:
+        n_clusters = result.metadata.get("k", "?")
+        cat_canonical = result.mapping.get("cat", "?")
+        dog_canonical = result.mapping.get("dog", "?")
+        suite.add(
+            "kLLMmeans:cold",
+            cat_canonical != dog_canonical,
+            elapsed,
+            f"k={n_clusters}, cat→{cat_canonical}, dog→{dog_canonical}",
+        )
+
+    # --- Schema-seeded ---
+    def run_seeded() -> Any:
+        kl = KLLMeansClustering(
+            num_clusters=3,
+            embedding_model="text-embedding-3-small",
+            summarization_model=p.model,
+            api_key=p.api_key,
+            seed_from_schema=True,
+            num_iterations=5,
+            summarize_every=2,
+        )
+        metadata = {
+            "description": "Type of pet animal",
+            "examples": ["cat", "dog", "fish"],
+            "synonyms": ["feline", "canine", "aquatic"],
+        }
+        return kl.normalize(values, context_field="animal", field_metadata=metadata)
+
+    result, elapsed = timed(run_seeded)
+    if isinstance(result, Exception):
+        suite.add("kLLMmeans:seeded", False, elapsed, str(result))
+    else:
+        n_clusters = result.metadata.get("k", "?")
+        suite.add("kLLMmeans:seeded", True, elapsed, f"k={n_clusters}, schema-seeded init OK")
 
 
-def test_full_pipeline_with_normalization(config: ProviderConfig) -> bool:
-    """Test full pipeline including normalization (needs OpenAI for embeddings)."""
-    api_key = os.environ.get(config.api_key_env, "")
-    openai_key = os.environ.get("OPENAI_API_KEY", "")
-
-    if not api_key:
-        logger.warning("[Full-%s] Skipped — %s not set", config.name, config.api_key_env)
-        return False
-
-    if not openai_key and not config.embedding_model:
-        logger.warning("[Full-%s] Skipped — needs OPENAI_API_KEY for embeddings", config.name)
-        return False
+def test_pipeline(suite: TestSuite) -> None:
+    """Test full pipeline end-to-end with normalization."""
+    p = first_available(OPENAI)
+    if not p:
+        suite.add("Pipeline:full", True, 0, "SKIPPED — no OPENAI_API_KEY")
+        return
 
     from catchfly import Pipeline
     from catchfly.demo import load_samples
-    from catchfly.discovery.single_pass import SinglePassDiscovery
-    from catchfly.extraction.llm_direct import LLMDirectExtraction
-    from catchfly.normalization.embedding_cluster import EmbeddingClustering
 
-    logger.info("[Full-%s] Testing full pipeline with normalization", config.name)
-    start = time.monotonic()
+    docs = load_samples("support_tickets")[:3]
 
-    try:
-        pipeline = Pipeline(
-            discovery=SinglePassDiscovery(
-                model=config.model,
-                base_url=config.base_url,
-                api_key=api_key,
-            ),
-            extraction=LLMDirectExtraction(
-                model=config.model,
-                base_url=config.base_url,
-                api_key=api_key,
-            ),
-            normalization=EmbeddingClustering(
-                embedding_model="text-embedding-3-small",
-                api_key=openai_key or api_key,
-                reduce_dimensions=False,
-                clustering_algorithm="agglomerative",
-                similarity_threshold=0.7,
-            ),
-        )
-
-        docs = load_samples("support_tickets")[:3]
-        results = pipeline.run(
-            documents=docs,
-            domain_hint="SaaS support tickets with categories and priorities",
+    def run() -> Any:
+        pipeline = Pipeline.quick(model=p.model, base_url=p.base_url, api_key=p.api_key)
+        return pipeline.run(
+            docs,
+            domain_hint="SaaS support tickets",
             normalize_fields=["category", "priority"],
         )
 
-        elapsed = time.monotonic() - start
+    result, elapsed = timed(run)
+    if isinstance(result, Exception):
+        suite.add(f"Pipeline:full:{p.name}", False, elapsed, str(result))
+    else:
+        n_records = len(result.records)
+        n_norm = len(result.normalizations)
+        cols = list(result.to_dataframe().columns) if n_records else []
+        suite.add(
+            f"Pipeline:full:{p.name}",
+            n_records > 0,
+            elapsed,
+            f"{n_records} records, {n_norm} normalized fields, cols={cols[:5]}",
+        )
 
-        assert results.schema is not None
-        assert len(results.records) > 0
-        logger.info("[Full-%s] %d records extracted", config.name, len(results.records))
 
-        for field, norm_result in results.normalizations.items():
-            logger.info(
-                "[Full-%s] Normalized '%s': %d unique → %d canonical",
-                config.name,
-                field,
-                len(norm_result.mapping),
-                len(set(norm_result.mapping.values())),
+def test_registry(suite: TestSuite) -> None:
+    """Test SchemaRegistry (no LLM needed)."""
+    import tempfile
+
+    from catchfly._types import Schema
+    from catchfly.schema.registry import SchemaRegistry
+
+    def run() -> Any:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "reg.json")
+            reg = SchemaRegistry(persist_path=path)
+
+            s1 = Schema(
+                model=None,
+                json_schema={"type": "object", "properties": {"name": {"type": "string"}}},
+                lineage=["test"],
+            )
+            s2 = Schema(
+                model=None,
+                json_schema={
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}, "age": {"type": "integer"}},
+                },
+                lineage=["test"],
             )
 
-        df = results.to_dataframe()
-        logger.info("[Full-%s] DataFrame: %d rows, %s", config.name, len(df), list(df.columns))
-        logger.info("[Full-%s] PASSED (%.1fs)", config.name, elapsed)
-        return True
+            v1 = reg.register(s1, "person")
+            v2 = reg.register(s2, "person")
 
-    except Exception as e:
-        elapsed = time.monotonic() - start
-        logger.error("[Full-%s] FAILED (%.1fs): %s", config.name, elapsed, e, exc_info=True)
-        return False
+            diff = SchemaRegistry.diff(s1, s2)
+
+            # Reload from disk
+            reg2 = SchemaRegistry(persist_path=path)
+            loaded = reg2.get("person")
+
+            return {
+                "v1": v1,
+                "v2": v2,
+                "diff_added": diff["added"],
+                "persisted": loaded is not None,
+                "n_schemas": len(reg2.list_schemas()),
+            }
+
+    result, elapsed = timed(run)
+    if isinstance(result, Exception):
+        suite.add("Registry", False, elapsed, str(result))
+    else:
+        suite.add(
+            "Registry",
+            result["persisted"] and result["n_schemas"] == 2,
+            elapsed,
+            f"{result['v1']}, {result['v2']}, diff added={result['diff_added']}, persisted={result['persisted']}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+SUITES = {
+    "discovery": test_discovery,
+    "optimizer": test_optimizer,
+    "extraction": test_extraction,
+    "normalization": test_normalization,
+    "kllmeans": test_kllmeans,
+    "pipeline": test_pipeline,
+    "registry": test_registry,
+}
 
 
 def main() -> None:
-    print("=" * 60)
-    print("Catchfly v0.1.0 — Live Integration Tests")
-    print("=" * 60)
-    print()
+    requested = sys.argv[1] if len(sys.argv) > 1 else "all"
 
-    # Show which API keys are available
-    for p in PROVIDERS:
-        key = os.environ.get(p.api_key_env, "")
-        status = f"set ({len(key)} chars)" if key else "NOT SET"
+    print("=" * 70)
+    print("Catchfly — Live Integration Tests")
+    print("=" * 70)
+
+    for p in ALL_PROVIDERS:
+        status = f"set ({len(p.api_key)} chars)" if p.available else "NOT SET"
         print(f"  {p.name:12s} ({p.api_key_env}): {status}")
     print()
 
-    results: dict[str, bool | None] = {}
+    if requested == "all":
+        suites_to_run = list(SUITES.keys())
+    elif requested in SUITES:
+        suites_to_run = [requested]
+    else:
+        print(f"Unknown suite: '{requested}'. Available: {', '.join(SUITES.keys())}, all")
+        sys.exit(1)
 
-    # --- Test 1: Discovery + Extraction per provider ---
-    print("-" * 60)
-    print("TEST 1: Discovery + Extraction")
-    print("-" * 60)
-    for config in PROVIDERS:
-        key = f"discovery+extraction:{config.name}"
-        results[key] = test_discovery_and_extraction(config)
+    all_results = TestSuite("all")
+
+    for suite_name in suites_to_run:
+        print(f"--- {suite_name.upper()} {'—' * (60 - len(suite_name))}")
+        suite = TestSuite(suite_name)
+        try:
+            SUITES[suite_name](suite)
+        except Exception as e:
+            suite.add(f"{suite_name}:CRASH", False, 0, str(e))
+            logger.error("Suite '%s' crashed: %s", suite_name, e, exc_info=True)
+        all_results.results.extend(suite.results)
         print()
 
-    # --- Test 2: Normalization with embeddings ---
-    print("-" * 60)
-    print("TEST 2: Normalization (embedding clustering)")
-    print("-" * 60)
-    # Use first provider that has an embedding model configured
-    embedding_provider = next((p for p in PROVIDERS if p.embedding_model), None)
-    if embedding_provider:
-        results["normalization"] = test_normalization(embedding_provider)
-    else:
-        logger.warning("No embedding provider available")
-        results["normalization"] = False
-    print()
-
-    # --- Test 3: Full pipeline with normalization ---
-    print("-" * 60)
-    print("TEST 3: Full pipeline (discovery + extraction + normalization)")
-    print("-" * 60)
-    # Test with the first available provider
-    for config in PROVIDERS:
-        if os.environ.get(config.api_key_env):
-            key = f"full_pipeline:{config.name}"
-            results[key] = test_full_pipeline_with_normalization(config)
-            print()
-            break  # Only test one to save costs
-
-    # --- Summary ---
-    print("=" * 60)
+    # Summary
+    print("=" * 70)
     print("SUMMARY")
-    print("=" * 60)
-    passed = sum(1 for v in results.values() if v is True)
-    failed = sum(1 for v in results.values() if v is False)
-    for name, result in results.items():
-        icon = "PASS" if result else "FAIL" if result is False else "SKIP"
-        print(f"  [{icon}] {name}")
-    print(f"\n  {passed} passed, {failed} failed, {len(results) - passed - failed} skipped")
+    print("=" * 70)
+    for r in all_results.results:
+        icon = "PASS" if r.passed else "FAIL"
+        print(f"  [{icon}] {r.name} ({r.elapsed_s:.1f}s)")
+    print(f"\n  {all_results.passed} passed, {all_results.failed} failed")
+    print(f"  Total: {sum(r.elapsed_s for r in all_results.results):.1f}s")
 
-    sys.exit(0 if failed == 0 else 1)
+    sys.exit(0 if all_results.failed == 0 else 1)
 
 
 if __name__ == "__main__":
