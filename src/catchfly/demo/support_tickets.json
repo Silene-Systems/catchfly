@@ -1,0 +1,42 @@
+[
+  {
+    "id": "ticket_001",
+    "content": "Subject: Can't login to dashboard\n\nHi, I've been trying to log in to the analytics dashboard since this morning but keep getting a 500 error. I've tried clearing cookies and using incognito mode. My account is john.doe@acme.com. This is urgent — I need to pull reports for a client meeting at 3pm.\n\nPriority: High\nProduct: Analytics Dashboard\nCategory: Authentication"
+  },
+  {
+    "id": "ticket_002",
+    "content": "Subject: Billing discrepancy on last invoice\n\nOur invoice #INV-2026-0342 shows a charge of $2,400 but we're on the Team plan which should be $1,200/month. We haven't upgraded or added any seats. Can you explain the extra charge? Our account ID is ACME-7891.\n\nPriority: Medium\nProduct: Billing\nCategory: Invoicing"
+  },
+  {
+    "id": "ticket_003",
+    "content": "Subject: API rate limit too low\n\nWe're hitting the 100 req/min rate limit on the REST API consistently during our nightly ETL job. Our current plan is Business tier. Is there a way to increase the limit? We process about 50,000 records per night and need roughly 500 req/min.\n\nPriority: Medium\nProduct: API\nCategory: Rate Limiting"
+  },
+  {
+    "id": "ticket_004",
+    "content": "Subject: Data export stuck at 0%\n\nI started a CSV export of our customer data (about 200k rows) 3 hours ago and the progress bar is still at 0%. The export ID is EXP-88921. I've tried cancelling and restarting but same issue. This is blocking our quarterly analysis.\n\nPriority: High\nProduct: Data Export\nCategory: Bug"
+  },
+  {
+    "id": "ticket_005",
+    "content": "Subject: Feature request — dark mode\n\nWould love to see a dark mode option in the web app. I work late hours and the bright white interface is straining my eyes. Many modern SaaS products offer this now. Could be a simple CSS toggle.\n\nPriority: Low\nProduct: Web Application\nCategory: Feature Request"
+  },
+  {
+    "id": "ticket_006",
+    "content": "Subject: SSO integration not working with Okta\n\nWe configured SAML SSO with Okta following your docs, but users get redirected to a blank page after authentication. The Okta logs show successful auth. We suspect the callback URL might be wrong. Our domain is acme.catchfly.dev. Need help ASAP — 200 users can't access the platform.\n\nPriority: Critical\nProduct: Authentication\nCategory: SSO / Integration"
+  },
+  {
+    "id": "ticket_007",
+    "content": "Subject: Webhook delivery failures\n\nOur webhook endpoint (https://api.acme.com/webhooks/catchfly) has been receiving intermittent 408 timeout errors from your system. About 30% of events are being dropped. We rely on these webhooks for real-time sync with our CRM. Started happening around March 15.\n\nPriority: High\nProduct: Integrations\nCategory: Webhooks"
+  },
+  {
+    "id": "ticket_008",
+    "content": "Subject: How to add team members?\n\nI just signed up for the Team plan and want to invite my colleagues. I can't find the 'Invite' button anywhere in Settings. Am I looking in the wrong place? We need to add 5 people.\n\nPriority: Low\nProduct: Account Management\nCategory: How-to"
+  },
+  {
+    "id": "ticket_009",
+    "content": "Subject: Charts not loading on Safari\n\nThe charts in the reporting module aren't rendering on Safari 17.4 (macOS Sonoma). Works fine on Chrome and Firefox. I see a blank white area where the chart should be. Console shows a WebGL error. Attached screenshot.\n\nPriority: Medium\nProduct: Reporting\nCategory: Browser Compatibility"
+  },
+  {
+    "id": "ticket_010",
+    "content": "Subject: Need to downgrade plan\n\nWe need to downgrade from Business to Starter plan effective next billing cycle (April 1). Our team has shrunk and we no longer need the advanced features. Current account: ACME-7891. Please confirm the process and any implications for our data.\n\nPriority: Low\nProduct: Billing\nCategory: Plan Change"
+  }
+]

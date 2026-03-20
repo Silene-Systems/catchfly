@@ -1,0 +1,42 @@
+[
+  {
+    "id": "case_001",
+    "content": "A 7-year-old male presented with progressive fatigue, exercise intolerance, and recurrent abdominal pain over 6 months. Physical examination revealed hepatosplenomegaly. Laboratory findings showed elevated alanine aminotransferase (ALT: 89 U/L), aspartate aminotransferase (AST: 102 U/L), and chitotriosidase (312 nmol/h/mL). Bone marrow biopsy showed lipid-laden macrophages. Acid sphingomyelinase activity was markedly reduced (0.2 nmol/h/mg, reference: 1.0-5.0). Genetic testing confirmed homozygous SMPD1 c.1267C>T mutation. Diagnosis: Niemann-Pick disease type B."
+  },
+  {
+    "id": "case_002",
+    "content": "A 34-year-old female was referred for evaluation of unexplained corneal opacities detected during routine eye examination. History revealed intermittent burning pain in hands and feet since adolescence (acroparesthesias). Examination showed angiokeratomas on the trunk and bilateral cornea verticillata. Cardiac echo showed mild left ventricular hypertrophy. Alpha-galactosidase A activity in leukocytes was 1.8 nmol/h/mg (reference: 8-20). Genetic analysis identified a heterozygous GLA c.644A>G (p.N215S) mutation. Diagnosis: Fabry disease, late-onset variant."
+  },
+  {
+    "id": "case_003",
+    "content": "A 2-year-old girl was brought in with failure to thrive, recurrent respiratory infections, and developmental delay. Weight was below the 3rd percentile. Skeletal survey showed dysostosis multiplex with anterior beaking of vertebrae. Urine glycosaminoglycan (GAG) analysis showed elevated dermatan sulfate and heparan sulfate. Enzyme assay demonstrated deficient iduronate-2-sulfatase activity. Molecular analysis revealed a novel hemizygous IDS c.998C>T mutation. Diagnosis: Mucopolysaccharidosis type II (Hunter syndrome)."
+  },
+  {
+    "id": "case_004",
+    "content": "A 45-year-old male presented with progressive weakness in proximal muscles over 2 years. He reported difficulty climbing stairs and rising from chairs. CK was elevated at 1,200 U/L. EMG showed myopathic pattern. Muscle biopsy revealed vacuolar myopathy with periodic acid-Schiff (PAS)-positive material. Acid alpha-glucosidase activity in dried blood spot was 0.8 pmol/punch/h (reference: >3.0). GAA gene sequencing identified compound heterozygous mutations: c.-32-13T>G and c.2238G>C. Diagnosis: Late-onset Pompe disease."
+  },
+  {
+    "id": "case_005",
+    "content": "A newborn male was noted to have coarse facial features, macroglossia, and umbilical hernia at birth. Neonatal screening showed elevated thyroid-stimulating hormone (TSH: 85 mIU/L), but thyroid function normalized after treatment. At 4 months, progressive hepatomegaly and hypotonia were noted. Urine oligosaccharide analysis was abnormal. Acid alpha-glucosidase activity was undetectable. Cardiac echo showed severe hypertrophic cardiomyopathy with left ventricular wall thickness of 12mm. GAA gene analysis confirmed homozygous c.2560C>T mutation. Diagnosis: Infantile-onset Pompe disease."
+  },
+  {
+    "id": "case_006",
+    "content": "A 28-year-old female presented with chronic diarrhea, steatorrhea, and neurological symptoms including peripheral neuropathy and ataxia. BMI was 16.2. Lab results showed acanthocytosis on peripheral blood smear, undetectable apolipoprotein B levels, and very low total cholesterol (38 mg/dL). Triglycerides were 12 mg/dL. Vitamin E level was undetectable. Fat-soluble vitamin deficiencies (A, D, E, K) were confirmed. MTTP gene sequencing revealed a homozygous frameshift mutation. Diagnosis: Abetalipoproteinemia (Bassen-Kornzweig syndrome)."
+  },
+  {
+    "id": "case_007",
+    "content": "A 12-year-old boy presented with splenomegaly discovered incidentally during evaluation for a sports physical. He was otherwise asymptomatic. Laboratory evaluation showed thrombocytopenia (platelets: 89,000/uL) and mildly elevated ACE levels. Bone marrow aspirate demonstrated Gaucher cells. Beta-glucocerebrosidase activity was reduced at 2.1 nmol/h/mg (reference: 10-45). GBA1 gene analysis showed homozygous N370S mutation. Bone density scan showed osteopenia of the lumbar spine (Z-score: -2.1). Diagnosis: Gaucher disease type 1."
+  },
+  {
+    "id": "case_008",
+    "content": "A 5-year-old girl was evaluated for short stature and recurrent otitis media. Height was at the 1st percentile. Physical exam revealed pectus carinatum, mild joint hypermobility, and inguinal hernia. Ophthalmologic exam showed corneal clouding. Urine GAG screen was positive with elevated keratan sulfate. N-acetylgalactosamine-6-sulfatase enzyme activity was deficient (0.3 nmol/h/mg, reference: 5-30). GALNS gene analysis revealed compound heterozygous mutations. Diagnosis: Morquio syndrome type A (MPS IVA)."
+  },
+  {
+    "id": "case_009",
+    "content": "A 19-year-old male was admitted with acute renal failure (creatinine: 8.2 mg/dL). History revealed childhood episodes of dehydration and polyuria. Physical examination showed short stature, frontal bossing, and rachitic rosary. Laboratory workup demonstrated metabolic acidosis (pH: 7.28, HCO3: 12 mEq/L), hypokalemia (K: 2.8 mEq/L), and hypophosphatemia. Urine analysis showed generalized aminoaciduria, glucosuria, and phosphaturia consistent with Fanconi syndrome. Genetic testing identified compound heterozygous mutations in SLC3A1. Diagnosis: Cystinosis with Fanconi syndrome."
+  },
+  {
+    "id": "case_010",
+    "content": "A 3-month-old infant presented with severe hypotonia, poor feeding, and a cherry-red spot on fundoscopic examination. Parents reported progressive loss of milestones since 2 months of age. MRI showed diffuse white matter abnormalities. Hexosaminidase A activity was absent in serum and leukocytes. HEXA gene analysis confirmed compound heterozygous pathogenic variants (c.1278insTATC and c.1073+1G>A). Family is of Ashkenazi Jewish descent. Diagnosis: Tay-Sachs disease (infantile form)."
+  }
+]

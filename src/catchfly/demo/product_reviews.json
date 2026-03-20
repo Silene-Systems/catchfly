@@ -1,0 +1,42 @@
+[
+  {
+    "id": "review_001",
+    "content": "The Samsung Galaxy S25 Ultra is a beast. Battery life is incredible — easily lasts 2 days. Camera quality is top-notch, especially in low light. The 6.9-inch display is gorgeous. Only downside: it's heavy at 218g. Rating: 9/10. Price paid: $1,299."
+  },
+  {
+    "id": "review_002",
+    "content": "Bought the Sony WH-1000XM6 headphones last week. Noise cancellation is the best I've tried. Sound quality is warm and balanced. Battery lasts about 35 hours. Comfortable for long sessions. A bit pricey at $399 but worth it. Score: 5 stars."
+  },
+  {
+    "id": "review_003",
+    "content": "Apple MacBook Air M4 review: Blazing fast for everyday tasks. The 15-inch Liquid Retina display is stunning. 18-hour battery life as advertised. Runs completely silent — no fan. Lightweight at 1.5kg. Only 8GB RAM in the base model is disappointing. Cost: $1,199. Rating: 8.5/10."
+  },
+  {
+    "id": "review_004",
+    "content": "Logitech MX Master 4 mouse. Ergonomic design fits my hand perfectly. The scroll wheel is buttery smooth. Works on glass surfaces. USB-C charging, lasts 70 days. Pairs with 3 devices simultaneously. Price: $99. Rating: 4.5/5."
+  },
+  {
+    "id": "review_005",
+    "content": "Disappointing experience with the Google Pixel 9 Pro. Camera is excellent as expected, but the phone overheats during video recording. Battery barely lasts a full day with heavy use. The Tensor G4 chip feels slower than Snapdragon competitors. Paid $999. Would rate it 6/10."
+  },
+  {
+    "id": "review_006",
+    "content": "ASUS ROG Zephyrus G16 gaming laptop. RTX 4070 runs most games at ultra settings, 144fps. The 16-inch 240Hz OLED display is a game-changer. Gets loud under load — fan noise is noticeable. Weight: 2.1kg, decent for a gaming laptop. Battery: 6 hours for productivity, 2 hours gaming. Price: $1,799. My rating: 8/10."
+  },
+  {
+    "id": "review_007",
+    "content": "Anker 737 Power Bank (24,000mAh). Charges my phone 5 times over. The 140W output can fast-charge a MacBook. Heavy though — 630g feels like a brick. Three ports (2 USB-C, 1 USB-A). LED display shows remaining capacity. Bought for $89. Solid 4 stars."
+  },
+  {
+    "id": "review_008",
+    "content": "Keychron Q1 Max mechanical keyboard. Hot-swappable switches are great for customization. The aluminum build feels premium. Wireless via Bluetooth 5.1, also works wired. Comes with Gateron Jupiter Brown switches — tactile and quiet. RGB backlighting is customizable. $199 well spent. Rating: 9/10."
+  },
+  {
+    "id": "review_009",
+    "content": "LG C4 65-inch OLED TV. Picture quality is phenomenal — perfect blacks, vivid colors. Great for movies and gaming (4K@120Hz, VRR). WebOS is smooth but has too many ads. Sound is mediocre, needs a soundbar. Wall mounting was easy. Price: $1,499 on sale. I'd give it 8.5 out of 10."
+  },
+  {
+    "id": "review_010",
+    "content": "Nothing Ear (3) wireless earbuds. Transparent design looks unique. ANC is decent but not class-leading. Sound signature is bass-heavy, which I enjoy. Battery: 6 hours per charge, 30 hours with case. Comfortable fit with the silicone tips. Only $99. Rating: 7/10."
+  }
+]
