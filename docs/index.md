@@ -2,9 +2,9 @@
   <img src="assets/logo.webp" alt="catchfly" width="200">
 </p>
 
-# catchfly
-
-*Many strategies, one pipeline — from unstructured text to structured data.*
+<p align="center">
+  <em>Many strategies, one pipeline — from unstructured text to structured data.</em>
+</p>
 
 **Catchfly** automates **schema discovery → structured extraction → normalization** from unstructured text at scale. Interchangeable strategies at each stage let you go from raw documents to clean, normalized data with minimal effort.
 

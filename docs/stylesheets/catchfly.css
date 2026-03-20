@@ -1,0 +1,127 @@
+/* ============================================================
+   Catchfly — custom color palette
+   Brand colors from logo:
+     Dark green:  #2D3B2D
+     Cream:       #F5F3EE
+     Muted rose:  #C4918A
+   ============================================================ */
+
+/* ----- Light mode (scheme: catchfly) ----- */
+[data-md-color-scheme="catchfly"] {
+  /* Primary — header, nav, links */
+  --md-primary-fg-color: #2D3B2D;
+  --md-primary-fg-color--light: #3D4F3D;
+  --md-primary-fg-color--dark: #1E2A1E;
+  --md-primary-bg-color: #FFFFFF;
+  --md-primary-bg-color--light: #F5F3EE;
+
+  /* Accent — hover, highlights, badges */
+  --md-accent-fg-color: #C4918A;
+  --md-accent-fg-color--transparent: rgba(196, 145, 138, 0.12);
+  --md-accent-bg-color: #FFFFFF;
+
+  /* Default (body) */
+  --md-default-fg-color: #2D3B2D;
+  --md-default-fg-color--light: #4A5D4A;
+  --md-default-fg-color--lighter: #6B7F6B;
+  --md-default-fg-color--lightest: rgba(45, 59, 45, 0.12);
+  --md-default-bg-color: #F5F3EE;
+  --md-default-bg-color--light: #FAFAF8;
+  --md-default-bg-color--lighter: #FFFFFF;
+  --md-default-bg-color--lightest: #FFFFFF;
+
+  /* Code blocks */
+  --md-code-bg-color: #FFFFFF;
+  --md-code-fg-color: #2D3B2D;
+
+  /* Typeset links */
+  --md-typeset-a-color: #2D3B2D;
+
+  /* Footer */
+  --md-footer-bg-color: #2D3B2D;
+  --md-footer-bg-color--dark: #1E2A1E;
+  --md-footer-fg-color: #F5F3EE;
+  --md-footer-fg-color--light: rgba(245, 243, 238, 0.7);
+  --md-footer-fg-color--lighter: rgba(245, 243, 238, 0.4);
+}
+
+/* Cards and content area on cream background */
+[data-md-color-scheme="catchfly"] .md-main {
+  background: #F5F3EE;
+}
+
+[data-md-color-scheme="catchfly"] .md-content {
+  background: #FFFFFF;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+/* Admonitions — semantic colors, slightly warm */
+[data-md-color-scheme="catchfly"] .md-typeset .admonition.note,
+[data-md-color-scheme="catchfly"] .md-typeset details.note {
+  border-color: #2D3B2D;
+}
+
+[data-md-color-scheme="catchfly"] .md-typeset .admonition.tip,
+[data-md-color-scheme="catchfly"] .md-typeset details.tip {
+  border-color: #4A7C59;
+}
+
+[data-md-color-scheme="catchfly"] .md-typeset .admonition.warning,
+[data-md-color-scheme="catchfly"] .md-typeset details.warning {
+  border-color: #C49A3C;
+}
+
+[data-md-color-scheme="catchfly"] .md-typeset .admonition.danger,
+[data-md-color-scheme="catchfly"] .md-typeset details.danger {
+  border-color: #B5564A;
+}
+
+/* ----- Dark mode (scheme: catchfly-dark) ----- */
+[data-md-color-scheme="catchfly-dark"] {
+  /* Primary */
+  --md-primary-fg-color: #2D3B2D;
+  --md-primary-fg-color--light: #3D4F3D;
+  --md-primary-fg-color--dark: #1E2A1E;
+  --md-primary-bg-color: #F5F3EE;
+  --md-primary-bg-color--light: #E8E5DE;
+
+  /* Accent — rose lightened ~15% for dark bg */
+  --md-accent-fg-color: #D4A69F;
+  --md-accent-fg-color--transparent: rgba(212, 166, 159, 0.12);
+  --md-accent-bg-color: #1A2420;
+
+  /* Default (body) */
+  --md-default-fg-color: #E8E5DE;
+  --md-default-fg-color--light: #C4C0B8;
+  --md-default-fg-color--lighter: #9A968E;
+  --md-default-fg-color--lightest: rgba(232, 229, 222, 0.12);
+  --md-default-bg-color: #1A2420;
+  --md-default-bg-color--light: #212D28;
+  --md-default-bg-color--lighter: #283630;
+  --md-default-bg-color--lightest: #2F3F38;
+
+  /* Code */
+  --md-code-bg-color: #212D28;
+  --md-code-fg-color: #E8E5DE;
+
+  /* Links */
+  --md-typeset-a-color: #D4A69F;
+
+  /* Footer */
+  --md-footer-bg-color: #141C18;
+  --md-footer-bg-color--dark: #0E1410;
+  --md-footer-fg-color: #E8E5DE;
+  --md-footer-fg-color--light: rgba(232, 229, 222, 0.7);
+  --md-footer-fg-color--lighter: rgba(232, 229, 222, 0.4);
+}
+
+[data-md-color-scheme="catchfly-dark"] .md-main {
+  background: #1A2420;
+}
+
+[data-md-color-scheme="catchfly-dark"] .md-content {
+  background: #212D28;
+  border-radius: 8px;
+  padding: 1rem;
+}

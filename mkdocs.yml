@@ -6,18 +6,15 @@ repo_name: silene-systems/catchfly
 
 theme:
   name: material
-  logo: assets/logo.webp
+  logo: assets/favicon.ico
   favicon: assets/favicon.ico
+  custom_dir: docs/overrides
   palette:
-    - scheme: default
-      primary: teal
-      accent: lime
+    - scheme: catchfly
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
-    - scheme: slate
-      primary: teal
-      accent: lime
+    - scheme: catchfly-dark
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -28,6 +25,9 @@ theme:
     - content.code.copy
     - content.code.annotate
     - search.suggest
+
+extra_css:
+  - stylesheets/catchfly.css
 
 nav:
   - Home: index.md

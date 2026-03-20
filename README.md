@@ -2,8 +2,6 @@
   <img src="docs/assets/logo.webp" alt="catchfly" width="200">
 </p>
 
-<h1 align="center">catchfly</h1>
-
 <p align="center">
   <em>Many strategies, one pipeline — from unstructured text to structured data.</em>
 </p>
