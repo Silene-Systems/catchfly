@@ -1,0 +1,69 @@
+site_name: catchfly
+site_url: https://catchfly.dev
+site_description: "Many strategies, one pipeline — from unstructured text to structured data."
+repo_url: https://github.com/silene-systems/catchfly
+repo_name: silene-systems/catchfly
+
+theme:
+  name: material
+  logo: assets/logo.webp
+  favicon: assets/favicon.ico
+  palette:
+    - scheme: default
+      primary: teal
+      accent: lime
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: teal
+      accent: lime
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quickstart.md
+  - Guides:
+      - Schema Discovery: guides/discovery.md
+      - Data Extraction: guides/extraction.md
+      - Normalization: guides/normalization.md
+      - Pipeline: guides/pipeline.md
+  - API Reference:
+      - Pipeline: api/pipeline.md
+      - Discovery: api/discovery.md
+      - Extraction: api/extraction.md
+      - Normalization: api/normalization.md
+      - Types: api/types.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: false
+            show_root_heading: true
+            heading_level: 3
+            docstring_style: google
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
