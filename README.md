@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <em>Many strategies, one pipeline — from unstructured text to structured data.</em>
+  <em>Catch the structured data.</em>
 </p>
 
 <p align="center">

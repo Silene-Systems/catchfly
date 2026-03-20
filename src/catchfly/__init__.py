@@ -1,5 +1,5 @@
 """
-catchfly — Many strategies, one pipeline.
+catchfly — Catch the structured data.
 
 Schema discovery, structured extraction, and normalization
 for unstructured text data.
