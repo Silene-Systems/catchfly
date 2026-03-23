@@ -69,7 +69,7 @@ class ThreeStageDiscovery(BaseModel):
     Stage 3: Schema expanded against 50-100 docs (add recurring, flag rare)
     """
 
-    model: str = "gpt-4o-mini"
+    model: str = "gpt-5.4-mini"
     stage1_samples: int = 3
     stage2_samples: int = 10
     stage3_samples: int = 50

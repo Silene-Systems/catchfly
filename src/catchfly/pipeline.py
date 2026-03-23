@@ -197,7 +197,7 @@ class Pipeline:
                     "Pipeline: starting normalization for fields: %s",
                     normalize_fields,
                 )
-                # Pass field_metadata from schema to normalization (for seed_from_schema)
+                # Pass field_metadata from schema to normalization strategies
                 schema_metadata = result.schema.field_metadata if result.schema else {}
                 result.normalizations = await self._normalize_fields(
                     result.records, normalize_fields, schema_metadata
@@ -268,9 +268,9 @@ class Pipeline:
     ) -> dict[str, NormalizationResult]:
         """Normalize specified fields from extracted records.
 
-        If schema_metadata is provided and the normalization strategy
-        supports field_metadata (e.g. KLLMeansClustering with
-        seed_from_schema), it will be passed through.
+        If schema_metadata is provided, it will be passed as field_metadata
+        to the normalization strategy (e.g. LLMCanonicalization uses it
+        for schema-aware prompting).
         """
         assert self.normalization is not None
         normalizations: dict[str, NormalizationResult] = {}

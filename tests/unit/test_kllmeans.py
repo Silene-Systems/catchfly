@@ -110,39 +110,6 @@ class TestKLLMeansClustering:
         assert result.mapping["NY"] == ny_canonical
         assert result.mapping["New York"] == ny_canonical
 
-    async def test_schema_seeded_init(self) -> None:
-        """seed_from_schema uses field_metadata descriptions as initial centroids."""
-        groups = {"Cat": ["cat", "cats", "kitten"]}
-        embedder = _make_clustered_embedder(groups)
-        mock_llm = MockKLLMeansLLM()
-
-        normalizer = KLLMeansClustering(
-            num_clusters=1,
-            seed_from_schema=True,
-            num_iterations=3,
-            summarize_every=10,  # no LLM summary during iterations
-        )
-
-        field_metadata = {
-            "description": "Type of animal",
-            "examples": ["cat", "dog"],
-            "synonyms": ["feline", "canine"],
-        }
-
-        with (
-            patch("catchfly.normalization.kllmeans.OpenAIEmbeddingClient", return_value=embedder),
-            patch("catchfly.normalization.kllmeans.OpenAICompatibleClient", return_value=mock_llm),
-        ):
-            result = await normalizer.anormalize(
-                ["cat", "cats", "kitten"],
-                context_field="animal",
-                field_metadata=field_metadata,
-            )
-
-        assert len(result.mapping) == 3
-        # All should map to same canonical
-        assert len(set(result.mapping.values())) == 1
-
     async def test_convergence(self) -> None:
         """Algorithm should converge (assignments stabilize)."""
         groups = {"A": ["a1", "a2", "a3"], "B": ["b1", "b2", "b3"]}

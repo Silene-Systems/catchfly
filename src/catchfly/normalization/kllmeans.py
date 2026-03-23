@@ -1,8 +1,10 @@
 """KLLMeansClustering — k-means with LLM-generated textual centroids.
 
 Implements the k-LLMmeans algorithm: standard k-means in embedding space
-with periodic LLM-generated textual summaries as centroids. Novel
-contribution: schema-seeded initialization from SchemaOptimizer field_metadata.
+with periodic LLM-generated textual summaries as centroids.
+
+Best suited for large-scale surface-form deduplication (e.g., brand name
+variants). For semantic normalization, LLMCanonicalization is recommended.
 """
 
 from __future__ import annotations
@@ -50,7 +52,7 @@ class KLLMeansClustering(BaseModel):
 
     Algorithm:
     1. Embed all unique values
-    2. Initialize centroids (schema-seeded, k-means++, or auto-detect k)
+    2. Initialize centroids via k-means++
     3. Iterate:
        a. Assign values to nearest centroid (standard k-means)
        b. Update centroids as mean of assigned embeddings
@@ -58,17 +60,15 @@ class KLLMeansClustering(BaseModel):
           summary for each cluster → embed summary → replace centroid
     4. Final LLM pass generates canonical names from cluster members
 
-    Novel: `seed_from_schema=True` uses SchemaOptimizer field_metadata
-    descriptions as initial centroids, bridging schema optimization
-    and normalization.
+    Best for surface-form deduplication where embeddings separate
+    variants well. For semantic normalization, use LLMCanonicalization.
     """
 
     num_clusters: int | None = None
     embedding_model: str = "text-embedding-3-small"
-    summarization_model: str = "gpt-4o-mini"
+    summarization_model: str = "gpt-5.4-mini"
     num_iterations: int = 10
     summarize_every: int = 3
-    seed_from_schema: bool = False
     base_url: str | None = None
     api_key: str | None = None
 
@@ -78,8 +78,6 @@ class KLLMeansClustering(BaseModel):
         self,
         values: list[str],
         context_field: str = "",
-        *,
-        field_metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> NormalizationResult:
         """Normalize values asynchronously using k-LLMmeans."""
@@ -105,10 +103,8 @@ class KLLMeansClustering(BaseModel):
         # Determine k
         k = self._determine_k(embeddings, len(unique_values))
 
-        # Initialize centroids
-        centroids = await self._init_centroids(
-            embeddings, k, unique_values, context_field, field_metadata, embed_client
-        )
+        # Initialize centroids via k-means++
+        centroids = self._kmeans_pp_init(embeddings, k)
 
         logger.info(
             "KLLMeansClustering: starting %d iterations, k=%d, %d values for '%s'",
@@ -167,18 +163,11 @@ class KLLMeansClustering(BaseModel):
         self,
         values: list[str],
         context_field: str = "",
-        *,
-        field_metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> NormalizationResult:
         """Normalize values synchronously."""
         return run_sync(
-            self.anormalize(
-                values,
-                context_field=context_field,
-                field_metadata=field_metadata,
-                **kwargs,
-            )
+            self.anormalize(values, context_field=context_field, **kwargs)
         )
 
     # ------------------------------------------------------------------
@@ -224,64 +213,6 @@ class KLLMeansClustering(BaseModel):
         except ImportError:
             # No sklearn — use heuristic
             return max(2, min(int(math.sqrt(n / 2)), 10))
-
-    async def _init_centroids(
-        self,
-        embeddings: Any,
-        k: int,
-        values: list[str],
-        field: str,
-        field_metadata: dict[str, Any] | None,
-        embed_client: OpenAIEmbeddingClient,
-    ) -> Any:
-        """Initialize centroids — schema-seeded or k-means++."""
-        if self.seed_from_schema and field_metadata:
-            return await self._schema_seeded_init(field_metadata, k, embeddings, embed_client)
-
-        return self._kmeans_pp_init(embeddings, k)
-
-    async def _schema_seeded_init(
-        self,
-        field_metadata: dict[str, Any],
-        k: int,
-        embeddings: Any,
-        embed_client: OpenAIEmbeddingClient,
-    ) -> Any:
-        """Initialize centroids from schema field descriptions."""
-        np = _import_numpy()
-
-        # Build seed texts from field_metadata
-        seed_texts: list[str] = []
-        description = field_metadata.get("description", "")
-        if description:
-            seed_texts.append(description)
-
-        examples = field_metadata.get("examples", [])
-        seed_texts.extend(str(e) for e in examples[:k])
-
-        synonyms = field_metadata.get("synonyms", [])
-        seed_texts.extend(str(s) for s in synonyms[:k])
-
-        if not seed_texts:
-            logger.warning(
-                "KLLMeansClustering: no seed texts in field_metadata, falling back to k-means++"
-            )
-            return self._kmeans_pp_init(embeddings, k)
-
-        # Embed seed texts
-        seed_embeddings = await embed_client.aembed(seed_texts[:k])
-        centroids = np.array(seed_embeddings, dtype=np.float64)
-
-        # Pad with k-means++ if fewer seeds than k
-        if centroids.shape[0] < k:
-            remaining = self._kmeans_pp_init(embeddings, k - centroids.shape[0])
-            centroids = np.vstack([centroids, remaining])
-
-        logger.info(
-            "KLLMeansClustering: schema-seeded init with %d seeds",
-            min(len(seed_texts), k),
-        )
-        return centroids[:k]
 
     @staticmethod
     def _kmeans_pp_init(embeddings: Any, k: int) -> Any:

@@ -16,6 +16,28 @@ from catchfly.providers.llm import OpenAICompatibleClient
 
 logger = logging.getLogger(__name__)
 
+_HIERARCHICAL_MERGE_PROMPT = """\
+You are a data consolidation assistant. You are given a list of canonical group \
+names for the field "{field}". Some of these names may refer to the same concept \
+using different wording.
+
+Rules:
+- Merge names that refer to the same underlying concept into one group
+- Choose the best (most standard/formal) name as the surviving canonical
+- Do NOT merge names that represent genuinely different concepts
+- Names that have no synonyms should appear as single-member groups
+- Output ONLY valid JSON with the structure:
+{{
+  "groups": [
+    {{
+      "canonical": "the surviving name",
+      "members": ["name1", "name2", ...],
+      "rationale": "why these are the same concept"
+    }}
+  ]
+}}\
+"""
+
 _CANONICALIZATION_PROMPT = """\
 You are a data normalization assistant. Given a list of values for the field \
 "{field}", group synonyms together and assign a canonical (standard) name to \
@@ -38,9 +60,55 @@ Rules:
 """
 
 
+def _format_schema_context(field_metadata: dict[str, Any] | None) -> str:
+    """Format field_metadata into a schema context block, or empty string."""
+    if not field_metadata:
+        return ""
+
+    context_parts: list[str] = []
+    if desc := field_metadata.get("description"):
+        context_parts.append(f"Field description: {desc}")
+    if examples := field_metadata.get("examples"):
+        examples_str = ", ".join(str(e) for e in examples[:10])
+        context_parts.append(f"Example canonical values: {examples_str}")
+    if synonyms := field_metadata.get("synonyms"):
+        synonyms_str = ", ".join(str(s) for s in synonyms[:10])
+        context_parts.append(f"Field aliases: {synonyms_str}")
+    if constraints := field_metadata.get("constraints"):
+        context_parts.append(f"Constraints: {constraints}")
+
+    if not context_parts:
+        return ""
+
+    return "\n\nSchema context for this field:\n" + "\n".join(context_parts)
+
+
+def _build_system_prompt(field: str, field_metadata: dict[str, Any] | None = None) -> str:
+    """Build canonicalization system prompt, optionally enriched with schema metadata."""
+    return _CANONICALIZATION_PROMPT.format(field=field) + _format_schema_context(field_metadata)
+
+
+def _build_hierarchical_system_prompt(
+    field: str, field_metadata: dict[str, Any] | None = None
+) -> str:
+    """Build hierarchical merge system prompt with optional schema metadata."""
+    base = _HIERARCHICAL_MERGE_PROMPT.format(field=field)
+    return base + _format_schema_context(field_metadata)
+
+
 def _build_batch_prompt(values: list[str], field: str) -> str:
     values_str = "\n".join(f"  - {v}" for v in values)
     return f'Values for field "{field}":\n{values_str}\n\nGroup these into canonical forms.'
+
+
+def _build_hierarchical_user_prompt(groups: list[dict[str, Any]]) -> str:
+    """Format canonical names with member counts for hierarchical merge."""
+    lines = [f'  - "{g["canonical"]}" ({len(g["members"])} members)' for g in groups]
+    return (
+        "Canonical groups to consolidate:\n"
+        + "\n".join(lines)
+        + "\n\nMerge names that refer to the same concept."
+    )
 
 
 class LLMCanonicalization(BaseModel):
@@ -48,16 +116,18 @@ class LLMCanonicalization(BaseModel):
 
     For small sets (≤ max_values_per_prompt), uses a single LLM call.
     For larger sets, uses map-reduce: split into batches, canonicalize
-    each independently, then merge using embedding similarity to detect
-    cross-batch duplicates.
+    each independently, string-merge identical canonicals, then optionally
+    run a hierarchical LLM merge to consolidate semantically similar groups.
     """
 
-    model: str = "gpt-4o-mini"
+    model: str = "gpt-5.4-mini"
     batch_size: int = 50
     max_values_per_prompt: int = 200
     base_url: str | None = None
     api_key: str | None = None
     temperature: float = 0.1
+    hierarchical_merge: bool = True
+    hierarchical_merge_rounds: int = 1
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -82,6 +152,8 @@ class LLMCanonicalization(BaseModel):
                 metadata={"strategy": "llm_canonicalization", "field": context_field},
             )
 
+        field_metadata: dict[str, Any] | None = kwargs.get("field_metadata")
+
         client = OpenAICompatibleClient(
             model=self.model,
             base_url=self.base_url,
@@ -96,9 +168,13 @@ class LLMCanonicalization(BaseModel):
         )
 
         if len(unique_values) <= self.max_values_per_prompt:
-            groups = await self._canonicalize_batch(client, unique_values, context_field)
+            groups = await self._canonicalize_batch(
+                client, unique_values, context_field, field_metadata
+            )
         else:
-            groups = await self._map_reduce(client, unique_values, context_field)
+            groups = await self._map_reduce(
+                client, unique_values, context_field, field_metadata
+            )
 
         return self._build_result(groups, value_counts, context_field)
 
@@ -116,9 +192,10 @@ class LLMCanonicalization(BaseModel):
         client: OpenAICompatibleClient,
         values: list[str],
         field: str,
+        field_metadata: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Single-call canonicalization for a batch of values."""
-        system_prompt = _CANONICALIZATION_PROMPT.format(field=field)
+        system_prompt = _build_system_prompt(field, field_metadata)
         user_prompt = _build_batch_prompt(values, field)
 
         response = await client.acomplete(
@@ -136,6 +213,7 @@ class LLMCanonicalization(BaseModel):
         client: OpenAICompatibleClient,
         values: list[str],
         field: str,
+        field_metadata: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Map-reduce canonicalization for large value sets."""
         # Map: split into batches and canonicalize each
@@ -148,19 +226,152 @@ class LLMCanonicalization(BaseModel):
                 min(i + self.batch_size, len(values)),
                 len(values),
             )
-            batch_groups = await self._canonicalize_batch(client, batch, field)
+            batch_groups = await self._canonicalize_batch(
+                client, batch, field, field_metadata
+            )
             all_groups.extend(batch_groups)
 
-        # Reduce: merge groups with same/similar canonical names
+        # Reduce: merge groups with same/similar canonical names (string-based)
         merged = self._merge_groups(all_groups)
 
+        # Hierarchical merge: second LLM pass to consolidate semantically similar groups
+        if self.hierarchical_merge and len(merged) > 1:
+            pre_hierarchical = len(merged)
+            merged = await self._hierarchical_merge(
+                client, merged, field, field_metadata
+            )
+            logger.info(
+                "LLMCanonicalization: hierarchical merge %d → %d groups",
+                pre_hierarchical,
+                len(merged),
+            )
+
         logger.info(
-            "LLMCanonicalization: map-reduce %d batches → %d groups → %d merged",
+            "LLMCanonicalization: map-reduce %d batches → %d groups → %d final",
             (len(values) + self.batch_size - 1) // self.batch_size,
             len(all_groups),
             len(merged),
         )
         return merged
+
+    async def _hierarchical_merge(
+        self,
+        client: OpenAICompatibleClient,
+        groups: list[dict[str, Any]],
+        field: str,
+        field_metadata: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Second LLM pass to merge semantically similar canonical groups."""
+        for round_idx in range(self.hierarchical_merge_rounds):
+            canonical_names = [g["canonical"] for g in groups]
+            if len(canonical_names) <= 1:
+                break
+
+            system_prompt = _build_hierarchical_system_prompt(field, field_metadata)
+
+            # Batch canonical names if needed
+            if len(canonical_names) <= self.max_values_per_prompt:
+                user_prompt = _build_hierarchical_user_prompt(groups)
+                response = await client.acomplete(
+                    [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=self.temperature,
+                )
+                merge_instructions = self._parse_groups(response.content, canonical_names)
+            else:
+                all_merge_groups: list[dict[str, Any]] = []
+                for i in range(0, len(groups), self.batch_size):
+                    batch = groups[i : i + self.batch_size]
+                    batch_names = [g["canonical"] for g in batch]
+                    user_prompt = _build_hierarchical_user_prompt(batch)
+                    response = await client.acomplete(
+                        [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        temperature=self.temperature,
+                    )
+                    all_merge_groups.extend(
+                        self._parse_groups(response.content, batch_names)
+                    )
+                merge_instructions = self._merge_groups(all_merge_groups)
+
+            new_groups = self._apply_hierarchical_merge(groups, merge_instructions)
+
+            if len(new_groups) >= len(groups):
+                logger.debug(
+                    "LLMCanonicalization: hierarchical merge round %d — no reduction, stopping",
+                    round_idx,
+                )
+                break
+
+            logger.debug(
+                "LLMCanonicalization: hierarchical merge round %d: %d → %d groups",
+                round_idx,
+                len(groups),
+                len(new_groups),
+            )
+            groups = new_groups
+
+        return groups
+
+    @staticmethod
+    def _apply_hierarchical_merge(
+        original_groups: list[dict[str, Any]],
+        merge_instructions: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Apply hierarchical merge instructions to original groups.
+
+        merge_instructions: groups where 'members' are canonical names to consolidate.
+        """
+        lookup: dict[str, dict[str, Any]] = {
+            g["canonical"]: g for g in original_groups
+        }
+        consumed: set[str] = set()
+        result: list[dict[str, Any]] = []
+
+        for instruction in merge_instructions:
+            surviving_canonical = instruction["canonical"]
+            old_canonicals = instruction.get("members", [])
+            rationale = instruction.get("rationale", "")
+
+            # Collect all raw members from the original groups being merged
+            merged_members: list[str] = []
+            merged_rationales: list[str] = []
+            for old_name in old_canonicals:
+                if old_name in lookup and old_name not in consumed:
+                    orig = lookup[old_name]
+                    merged_members.extend(orig["members"])
+                    if orig.get("rationale"):
+                        merged_rationales.append(orig["rationale"])
+                    consumed.add(old_name)
+                elif old_name not in lookup:
+                    logger.warning(
+                        "Hierarchical merge: canonical '%s' not found in originals, skipping",
+                        old_name,
+                    )
+
+            if merged_members:
+                combined_rationale = "; ".join(filter(None, merged_rationales))
+                if rationale:
+                    if combined_rationale:
+                        combined_rationale = f"{rationale}; {combined_rationale}"
+                    else:
+                        combined_rationale = rationale
+                result.append({
+                    "canonical": surviving_canonical,
+                    "members": merged_members,
+                    "rationale": combined_rationale,
+                })
+
+        # Keep any original groups that weren't consumed by any merge instruction
+        for g in original_groups:
+            if g["canonical"] not in consumed:
+                result.append(g)
+
+        return result
 
     def _parse_groups(
         self,

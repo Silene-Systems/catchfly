@@ -85,10 +85,10 @@ class SchemaOptimizer(BaseModel):
     4. Update schema field_metadata
 
     The enriched field_metadata (descriptions, examples, synonyms) can be
-    used as seed centroids for KLLMeansClustering normalization.
+    used as prompt context for LLMCanonicalization normalization.
     """
 
-    model: str = "gpt-4o-mini"
+    model: str = "gpt-5.4-mini"
     num_iterations: int = 5
     base_url: str | None = None
     api_key: str | None = None
