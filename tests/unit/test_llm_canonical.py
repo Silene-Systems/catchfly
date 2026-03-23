@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator
 
 import pytest
 
@@ -68,11 +69,17 @@ class MockCanonicalizationLLM:
         return await self.acomplete(messages, **kwargs)
 
 
-def _patch_client(mod: Any, mock_llm: MockCanonicalizationLLM):
-    """Context-manager-style helper for monkey-patching OpenAICompatibleClient."""
+@contextmanager
+def _patch_client(mock_llm: MockCanonicalizationLLM) -> Iterator[None]:
+    """Temporarily replace OpenAICompatibleClient with *mock_llm*."""
+    import catchfly.normalization.llm_canonical as mod
+
     original = mod.OpenAICompatibleClient
     mod.OpenAICompatibleClient = lambda **kw: mock_llm  # type: ignore[assignment,misc]
-    return original
+    try:
+        yield
+    finally:
+        mod.OpenAICompatibleClient = original  # type: ignore[assignment]
 
 
 class TestLLMCanonicalization:
@@ -80,14 +87,9 @@ class TestLLMCanonicalization:
         mock_llm = MockCanonicalizationLLM()
         normalizer = LLMCanonicalization(model="mock")
 
-        import catchfly.normalization.llm_canonical as mod
-
-        original = _patch_client(mod, mock_llm)
-        try:
+        with _patch_client(mock_llm):
             values = ["New York", "NYC", "NY", "Los Angeles", "LA", "L.A."]
             result = await normalizer.anormalize(values, context_field="city")
-        finally:
-            mod.OpenAICompatibleClient = original  # type: ignore[assignment]
 
         assert result.mapping["NYC"] == "New York"
         assert result.mapping["LA"] == "Los Angeles"
@@ -107,13 +109,8 @@ class TestLLMCanonicalization:
         mock_llm = MockCanonicalizationLLM()
         normalizer = LLMCanonicalization(model="mock")
 
-        import catchfly.normalization.llm_canonical as mod
-
-        original = _patch_client(mod, mock_llm)
-        try:
+        with _patch_client(mock_llm):
             result = await normalizer.anormalize(["NYC", "New York"], context_field="city")
-        finally:
-            mod.OpenAICompatibleClient = original  # type: ignore[assignment]
 
         explanation = result.explain("NYC")
         assert "New York" in explanation
@@ -129,14 +126,9 @@ class TestLLMCanonicalization:
             model="mock", max_values_per_prompt=5, batch_size=3, hierarchical_merge=False
         )
 
-        import catchfly.normalization.llm_canonical as mod
-
-        original = _patch_client(mod, mock_llm)
-        try:
+        with _patch_client(mock_llm):
             values = [f"val_{i}" for i in range(10)]
             result = await normalizer.anormalize(values, context_field="test")
-        finally:
-            mod.OpenAICompatibleClient = original  # type: ignore[assignment]
 
         # All values should be mapped (ungrouped ones become singletons)
         assert len(result.mapping) >= len(set(values))
@@ -215,15 +207,10 @@ class TestLLMCanonicalization:
         mock_llm = MockCanonicalizationLLM()
         normalizer = LLMCanonicalization(model="mock")
 
-        import catchfly.normalization.llm_canonical as mod
-
-        original = _patch_client(mod, mock_llm)
-        try:
+        with _patch_client(mock_llm):
             result = normalizer.normalize(
                 ["NYC", "New York", "LA", "Los Angeles"], context_field="city"
             )
-        finally:
-            mod.OpenAICompatibleClient = original  # type: ignore[assignment]
 
         assert result.mapping["NYC"] == "New York"
 
@@ -286,10 +273,7 @@ class TestSchemaAwareIntegration:
         mock_llm = MockCanonicalizationLLM()
         normalizer = LLMCanonicalization(model="mock")
 
-        import catchfly.normalization.llm_canonical as mod
-
-        original = _patch_client(mod, mock_llm)
-        try:
+        with _patch_client(mock_llm):
             metadata = {
                 "description": "Type of jewelry product",
                 "examples": ["Rings", "Necklaces"],
@@ -297,8 +281,6 @@ class TestSchemaAwareIntegration:
             await normalizer.anormalize(
                 ["NYC", "New York"], context_field="product_type", field_metadata=metadata
             )
-        finally:
-            mod.OpenAICompatibleClient = original  # type: ignore[assignment]
 
         assert mock_llm.call_count == 1
         system_msg = mock_llm.captured_messages[0][0]["content"]
@@ -311,13 +293,8 @@ class TestSchemaAwareIntegration:
         mock_llm = MockCanonicalizationLLM()
         normalizer = LLMCanonicalization(model="mock")
 
-        import catchfly.normalization.llm_canonical as mod
-
-        original = _patch_client(mod, mock_llm)
-        try:
+        with _patch_client(mock_llm):
             await normalizer.anormalize(["NYC", "New York"], context_field="city")
-        finally:
-            mod.OpenAICompatibleClient = original  # type: ignore[assignment]
 
         system_msg = mock_llm.captured_messages[0][0]["content"]
         assert "Schema context" not in system_msg
@@ -424,14 +401,9 @@ class TestHierarchicalMerge:
             model="mock", max_values_per_prompt=3, batch_size=2, hierarchical_merge=True
         )
 
-        import catchfly.normalization.llm_canonical as mod
-
-        original = _patch_client(mod, mock_llm)
-        try:
+        with _patch_client(mock_llm):
             values = [f"val_{i}" for i in range(8)]
             result = await normalizer.anormalize(values, context_field="product_type")
-        finally:
-            mod.OpenAICompatibleClient = original  # type: ignore[assignment]
 
         # Hierarchical merge should have been called (more than just batch calls)
         assert mock_llm.call_count > 4
@@ -447,14 +419,9 @@ class TestHierarchicalMerge:
             model="mock", max_values_per_prompt=3, batch_size=2, hierarchical_merge=False
         )
 
-        import catchfly.normalization.llm_canonical as mod
-
-        original = _patch_client(mod, mock_llm)
-        try:
+        with _patch_client(mock_llm):
             values = [f"val_{i}" for i in range(8)]
             await normalizer.anormalize(values, context_field="test")
-        finally:
-            mod.OpenAICompatibleClient = original  # type: ignore[assignment]
 
         # 4 batch calls (8 values / batch_size=2), no hierarchical merge call
         assert mock_llm.call_count == 4
@@ -471,14 +438,9 @@ class TestHierarchicalMerge:
             model="mock", max_values_per_prompt=200, hierarchical_merge=True
         )
 
-        import catchfly.normalization.llm_canonical as mod
-
-        original = _patch_client(mod, mock_llm)
-        try:
+        with _patch_client(mock_llm):
             values = ["a1", "a2", "b1", "b2"]
             await normalizer.anormalize(values, context_field="test")
-        finally:
-            mod.OpenAICompatibleClient = original  # type: ignore[assignment]
 
         # Only 1 call — single batch, no map-reduce, no hierarchical merge
         assert mock_llm.call_count == 1
@@ -500,14 +462,9 @@ class TestHierarchicalMerge:
             model="mock", max_values_per_prompt=3, batch_size=2, hierarchical_merge=True
         )
 
-        import catchfly.normalization.llm_canonical as mod
-
-        original = _patch_client(mod, mock_llm)
-        try:
+        with _patch_client(mock_llm):
             values = [f"val_{i}" for i in range(6)]
             result = await normalizer.anormalize(values, context_field="test")
-        finally:
-            mod.OpenAICompatibleClient = original  # type: ignore[assignment]
 
         # Every input value must appear in the mapping
         for v in set(values):
@@ -530,17 +487,12 @@ class TestHierarchicalMerge:
             model="mock", max_values_per_prompt=3, batch_size=2, hierarchical_merge=True
         )
 
-        import catchfly.normalization.llm_canonical as mod
-
-        original = _patch_client(mod, mock_llm)
-        try:
+        with _patch_client(mock_llm):
             metadata = {"description": "Product category"}
             values = [f"val_{i}" for i in range(4)]
             await normalizer.anormalize(
                 values, context_field="product_type", field_metadata=metadata
             )
-        finally:
-            mod.OpenAICompatibleClient = original  # type: ignore[assignment]
 
         # The last call is the hierarchical merge — check its system prompt
         merge_system_msg = mock_llm.captured_messages[-1][0]["content"]

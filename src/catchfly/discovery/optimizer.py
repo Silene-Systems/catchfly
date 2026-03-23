@@ -3,7 +3,7 @@
 Iteratively enriches field descriptions by running extraction on test
 documents, analyzing errors/gaps, and asking the LLM to improve field
 definitions. The enriched field_metadata serves as semantic anchors
-for downstream normalization (seed centroids for kLLMmeans).
+for downstream normalization (schema-aware prompting in LLMCanonicalization).
 """
 
 from __future__ import annotations

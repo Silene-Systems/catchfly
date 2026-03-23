@@ -92,8 +92,7 @@ def _build_hierarchical_system_prompt(
     field: str, field_metadata: dict[str, Any] | None = None
 ) -> str:
     """Build hierarchical merge system prompt with optional schema metadata."""
-    base = _HIERARCHICAL_MERGE_PROMPT.format(field=field)
-    return base + _format_schema_context(field_metadata)
+    return _HIERARCHICAL_MERGE_PROMPT.format(field=field) + _format_schema_context(field_metadata)
 
 
 def _build_batch_prompt(values: list[str], field: str) -> str:
@@ -354,12 +353,8 @@ class LLMCanonicalization(BaseModel):
                     )
 
             if merged_members:
-                combined_rationale = "; ".join(filter(None, merged_rationales))
-                if rationale:
-                    if combined_rationale:
-                        combined_rationale = f"{rationale}; {combined_rationale}"
-                    else:
-                        combined_rationale = rationale
+                rationale_parts = [rationale] + merged_rationales
+                combined_rationale = "; ".join(filter(None, rationale_parts))
                 result.append({
                     "canonical": surviving_canonical,
                     "members": merged_members,
