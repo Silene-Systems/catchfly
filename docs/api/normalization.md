@@ -1,12 +1,16 @@
 # Normalization API
 
-## EmbeddingClustering
+## OntologyMapping
 
-::: catchfly.normalization.embedding_cluster.EmbeddingClustering
+::: catchfly.normalization.ontology_mapping.OntologyMapping
 
 ## LLMCanonicalization
 
 ::: catchfly.normalization.llm_canonical.LLMCanonicalization
+
+## EmbeddingClustering
+
+::: catchfly.normalization.embedding_cluster.EmbeddingClustering
 
 ## KLLMeansClustering
 

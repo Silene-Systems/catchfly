@@ -42,9 +42,10 @@ results.to_dataframe()
 | | `ThreeStageDiscovery` | Careful progressive refinement |
 | | `SchemaOptimizer` | Enriching field descriptions for better extraction |
 | **Extraction** | `LLMDirectExtraction` | Per-document structured extraction |
-| **Normalization** | `EmbeddingClustering` | Fast, no LLM needed (after embedding) |
-| | `LLMCanonicalization` | High quality, small-medium value sets |
-| | `KLLMeansClustering` | Large sets, interpretable clusters, schema-seeded |
+| **Normalization** | `OntologyMapping` | Map to HPO/ICD-10/custom ontologies |
+| | `LLMCanonicalization` | General-purpose, schema-aware, hierarchical merge |
+| | `EmbeddingClustering` | Fast, no LLM needed (after embedding) |
+| | `KLLMeansClustering` | Surface-form deduplication |
 
 ## Next Steps
 

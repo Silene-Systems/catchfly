@@ -44,6 +44,7 @@ nav:
       - Discovery: api/discovery.md
       - Extraction: api/extraction.md
       - Normalization: api/normalization.md
+      - Ontology: api/ontology.md
       - Types: api/types.md
 
 plugins:

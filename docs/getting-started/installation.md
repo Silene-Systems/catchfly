@@ -24,7 +24,7 @@ uv add catchfly[openai,clustering,export]
 | `openai` | `openai` SDK | LLM calls, embeddings (API-based) |
 | `clustering` | `scikit-learn`, `numpy`, `umap-learn` | EmbeddingClustering, KLLMeansClustering |
 | `export` | `pandas`, `pyarrow` | `results.to_dataframe()`, `.to_parquet()` |
-| `medical` | `pronto` | OntologyMapping (HPO, future) |
+| `medical` | `pronto`, `numpy` | OntologyMapping (HPO, custom ontologies) |
 | `pdf` | `pymupdf` | PDF document loading (future) |
 
 ## Requirements

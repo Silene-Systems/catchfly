@@ -25,15 +25,12 @@ Choose your own strategies:
 from catchfly import Pipeline
 from catchfly.discovery.three_stage import ThreeStageDiscovery
 from catchfly.extraction.llm_direct import LLMDirectExtraction
-from catchfly.normalization.kllmeans import KLLMeansClustering
+from catchfly.normalization.llm_canonical import LLMCanonicalization
 
 pipeline = Pipeline(
     discovery=ThreeStageDiscovery(model="gpt-5.4-mini"),
     extraction=LLMDirectExtraction(model="gpt-5.4-mini"),
-    normalization=KLLMeansClustering(
-        num_clusters=10,
-        seed_from_schema=True,
-    ),
+    normalization=LLMCanonicalization(model="gpt-5.4-mini"),
 )
 ```
 

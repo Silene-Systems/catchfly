@@ -76,5 +76,5 @@ results = pipeline.run(docs, schema=Invoice)
 ## Next Steps
 
 - [Schema Discovery Guide](../guides/discovery.md) — SinglePass, ThreeStage, Optimizer
-- [Normalization Guide](../guides/normalization.md) — Embedding, LLM, kLLMmeans
+- [Normalization Guide](../guides/normalization.md) — OntologyMapping, LLMCanonicalization, Embedding, kLLMmeans
 - [Pipeline Guide](../guides/pipeline.md) — Cost control, checkpoint, error handling
