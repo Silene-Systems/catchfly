@@ -120,6 +120,7 @@ class KLLMeansClustering(BaseModel):
             model=self.summarization_model,
             base_url=self.base_url,
             api_key=self.api_key,
+            usage_callback=getattr(self, "_usage_callback", None),
         )
 
         assignments = np.zeros(len(unique_values), dtype=int)

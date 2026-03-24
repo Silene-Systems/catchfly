@@ -89,6 +89,23 @@ class UsageTracker:
             if total > self.max_cost_usd:
                 raise BudgetExceededError(spent=total, limit=self.max_cost_usd)
 
+    def make_callback(self, stage: str) -> Any:
+        """Create a usage callback for a specific pipeline stage.
+
+        Returns a callable(model, input_tokens, output_tokens, latency_ms)
+        that records usage to this tracker.
+        """
+
+        def _cb(
+            model: str,
+            input_tokens: int,
+            output_tokens: int,
+            latency_ms: float,
+        ) -> None:
+            self.record(stage, model, input_tokens, output_tokens, latency_ms)
+
+        return _cb
+
     def total_cost(self) -> float:
         """Total cost across all recorded calls."""
         return sum(r.cost_usd for r in self._records)

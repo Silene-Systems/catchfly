@@ -147,6 +147,27 @@ class TestPipeline:
         result = pipeline.run(_make_docs(2), domain_hint="test")
         assert len(result.records) == 2
 
+    async def test_normalize_fields_all(self) -> None:
+        """normalize_fields='all' auto-detects string fields from schema."""
+        pipeline = Pipeline(
+            discovery=MockDiscovery(),
+            extraction=MockExtraction(),
+            normalization=MockNormalization(),
+        )
+        result = await pipeline.arun(
+            _make_docs(2), domain_hint="test", normalize_fields="all"
+        )
+        # MockDiscovery schema has "title" (string) and "rating" (integer)
+        # Only "title" should be normalized
+        assert "title" in result.normalizations
+        assert "rating" not in result.normalizations
+
+    async def test_normalize_fields_all_no_schema(self) -> None:
+        """normalize_fields='all' without schema should skip normalization."""
+        pipeline = Pipeline(normalization=MockNormalization())
+        result = await pipeline.arun(_make_docs(1), normalize_fields="all")
+        assert result.normalizations == {}
+
     def test_estimate_cost(self) -> None:
         pipeline = Pipeline.quick(model="gpt-5.4-mini")
         docs = _make_docs(10)
@@ -155,6 +176,130 @@ class TestPipeline:
         assert "discovery" in estimate
         assert "extraction" in estimate
         assert estimate["total"] >= 0
+
+
+class TestOnSchemaReady:
+    async def test_callback_modifies_schema(self) -> None:
+        """on_schema_ready callback can modify the schema."""
+        from catchfly._types import Schema
+
+        def modify_schema(schema: Schema) -> Schema:
+            return Schema(
+                model=schema.model,
+                json_schema=schema.json_schema,
+                lineage=["modified"],
+            )
+
+        pipeline = Pipeline(discovery=MockDiscovery(), extraction=MockExtraction())
+        result = await pipeline.arun(
+            _make_docs(1), domain_hint="test", on_schema_ready=modify_schema
+        )
+
+        assert result.schema is not None
+        assert result.schema.lineage == ["modified"]
+
+    async def test_callback_returns_none(self) -> None:
+        """Callback returning None does not modify schema."""
+        calls: list[Any] = []
+
+        def inspect_schema(schema: Any) -> None:
+            calls.append(schema)
+            return None
+
+        pipeline = Pipeline(discovery=MockDiscovery(), extraction=MockExtraction())
+        result = await pipeline.arun(
+            _make_docs(1), domain_hint="test", on_schema_ready=inspect_schema
+        )
+
+        assert len(calls) == 1
+        assert result.schema is not None
+        assert result.schema.lineage == ["MockDiscovery"]
+
+    async def test_no_callback(self) -> None:
+        """No callback — schema unchanged."""
+        pipeline = Pipeline(discovery=MockDiscovery(), extraction=MockExtraction())
+        result = await pipeline.arun(_make_docs(1), domain_hint="test")
+        assert result.schema is not None
+        assert result.schema.lineage == ["MockDiscovery"]
+
+
+class TestUsageTrackerWiring:
+    async def test_tracker_records_usage(self) -> None:
+        """Usage callback on strategies should populate result.report."""
+        pipeline = Pipeline(
+            discovery=MockDiscovery(),
+            extraction=MockExtraction(),
+            normalization=MockNormalization(),
+        )
+        result = await pipeline.arun(_make_docs(2), domain_hint="test")
+        # Tracker is created but mock strategies don't call LLM,
+        # so report is empty — this tests wiring doesn't crash
+        assert result.report is not None
+        assert result.report.total_cost_usd >= 0
+
+    async def test_usage_callback_attribute_set(self) -> None:
+        """Pipeline sets _usage_callback on strategies before running."""
+        disc = MockDiscovery()
+        ext = MockExtraction()
+        norm = MockNormalization()
+        pipeline = Pipeline(discovery=disc, extraction=ext, normalization=norm)
+        await pipeline.arun(_make_docs(1), domain_hint="test")
+        assert hasattr(disc, "_usage_callback")
+        assert hasattr(ext, "_usage_callback")
+        assert hasattr(norm, "_usage_callback")
+
+
+class TestVerbose:
+    def test_verbose_flag_stored(self) -> None:
+        pipeline = Pipeline(verbose=True)
+        assert pipeline.verbose is True
+
+    def test_quick_verbose(self) -> None:
+        pipeline = Pipeline.quick(model="gpt-5.4-mini", verbose=True)
+        assert pipeline.verbose is True
+
+    async def test_verbose_does_not_crash(self) -> None:
+        """verbose=True should work even without tqdm installed."""
+        pipeline = Pipeline(
+            discovery=MockDiscovery(),
+            extraction=MockExtraction(),
+            normalization=MockNormalization(),
+            verbose=True,
+        )
+        result = await pipeline.arun(
+            _make_docs(2),
+            domain_hint="test",
+            normalize_fields=["title"],
+        )
+        assert len(result.records) == 2
+
+
+class TestGlobDocuments:
+    async def test_glob_strings_resolved(self, tmp_path: Any) -> None:
+        """Pipeline accepts glob pattern strings as documents."""
+        from pathlib import Path
+
+        p = Path(str(tmp_path))
+        (p / "a.txt").write_text("Document about topic A")
+        (p / "b.txt").write_text("Document about topic B")
+
+        pipeline = Pipeline(
+            discovery=MockDiscovery(),
+            extraction=MockExtraction(),
+        )
+        result = await pipeline.arun(
+            [str(p / "*.txt")], domain_hint="test"
+        )
+        assert len(result.records) == 2
+
+
+class TestUsageReportAlias:
+    def test_cost_usd_alias(self) -> None:
+        from catchfly._types import UsageReport
+
+        report = UsageReport(total_cost_usd=1.23)
+        assert report.cost_usd == 1.23
+        assert report.cost_usd == report.total_cost_usd
 
 
 class TestPipelineQuick:

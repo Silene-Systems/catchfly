@@ -117,12 +117,14 @@ class OpenAICompatibleClient:
         api_key: str | None = None,
         max_retries: int = _DEFAULT_MAX_RETRIES,
         timeout: float = 120.0,
+        usage_callback: Any | None = None,
     ) -> None:
         self.model = model
         self.base_url = base_url
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         self.max_retries = max_retries
         self.timeout = timeout
+        self.usage_callback = usage_callback
 
     def _make_async_client(self) -> Any:
         """Create a fresh AsyncOpenAI client.
@@ -399,6 +401,9 @@ class OpenAICompatibleClient:
                     output_tokens,
                     elapsed_ms,
                 )
+
+                if self.usage_callback is not None:
+                    self.usage_callback(effective_model, input_tokens, output_tokens, elapsed_ms)
 
                 await async_client.close()
                 return LLMResponse(

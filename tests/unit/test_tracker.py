@@ -62,3 +62,19 @@ class TestUsageTracker:
         assert data["total_cost_usd"] == pytest.approx(0.01)
         assert len(data["records"]) == 1
         assert data["records"][0]["stage"] == "discovery"
+
+    def test_make_callback(self) -> None:
+        tracker = UsageTracker()
+        cb = tracker.make_callback("extraction")
+        cb("gpt-5.4-mini", 500, 200, 100.0)
+        cb("gpt-5.4-mini", 300, 100, 50.0)
+        assert tracker.total_input_tokens() == 800
+        assert tracker.total_output_tokens() == 300
+        report = tracker.report()
+        assert report.breakdown["extraction"]["calls"] == 2
+
+    def test_make_callback_budget_exceeded(self) -> None:
+        tracker = UsageTracker(max_cost_usd=0.001)
+        cb = tracker.make_callback("discovery")
+        with pytest.raises(BudgetExceededError):
+            cb("gpt-5.4", 100_000, 50_000, 500.0)

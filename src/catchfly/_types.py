@@ -108,6 +108,11 @@ class UsageReport:
     total_latency_ms: float = 0.0
     breakdown: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def cost_usd(self) -> float:
+        """Alias for total_cost_usd (PRD compatibility)."""
+        return self.total_cost_usd
+
 
 @dataclass
 class PipelineResult:

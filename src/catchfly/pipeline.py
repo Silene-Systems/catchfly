@@ -18,6 +18,8 @@ from catchfly.exceptions import BudgetExceededError
 from catchfly.telemetry.tracker import UsageTracker
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from pydantic import BaseModel
 
     from catchfly.discovery.base import DiscoveryStrategy
@@ -38,18 +40,29 @@ class Pipeline:
         self,
         discovery: DiscoveryStrategy | None = None,
         extraction: ExtractionStrategy | None = None,
-        normalization: NormalizationStrategy | None = None,
+        normalization: NormalizationStrategy | dict[str, NormalizationStrategy] | None = None,
+        *,
+        verbose: bool = False,
     ) -> None:
         """Initialize pipeline with optional strategy instances.
 
         Args:
             discovery: Schema discovery strategy (or None to skip).
             extraction: Data extraction strategy (or None to skip).
-            normalization: Value normalization strategy (or None to skip).
+            normalization: Value normalization strategy, or a dict mapping
+                field names to strategies (auto-wrapped in CompositeNormalization),
+                or None to skip.
+            verbose: Show tqdm progress bars during extraction/normalization.
         """
         self.discovery = discovery
         self.extraction = extraction
-        self.normalization = normalization
+        self.verbose = verbose
+        if isinstance(normalization, dict):
+            from catchfly.normalization.composite import CompositeNormalization
+
+            self.normalization = CompositeNormalization(field_strategies=normalization)
+        else:
+            self.normalization = normalization
 
     @classmethod
     def quick(
@@ -58,6 +71,8 @@ class Pipeline:
         base_url: str | None = None,
         api_key: str | None = None,
         on_error: Literal["raise", "skip", "collect"] = "raise",
+        *,
+        verbose: bool = False,
     ) -> Pipeline:
         """Create a pipeline with sensible defaults.
 
@@ -69,6 +84,7 @@ class Pipeline:
             api_key: Optional API key.
             on_error: Error handling mode for extraction
                 ("raise", "skip", or "collect").
+            verbose: Show tqdm progress bars during processing.
         """
         from catchfly.discovery.single_pass import SinglePassDiscovery
         from catchfly.extraction.llm_direct import LLMDirectExtraction
@@ -91,32 +107,50 @@ class Pipeline:
                 base_url=base_url,
                 api_key=api_key,
             ),
+            verbose=verbose,
         )
 
     async def arun(
         self,
-        documents: list[Document],
+        documents: list[Document] | list[str],
         *,
         domain_hint: str | None = None,
-        normalize_fields: list[str] | None = None,
+        normalize_fields: list[str] | Literal["all"] | None = None,
         max_cost_usd: float | None = None,
         schema: type[BaseModel] | None = None,
         checkpoint_dir: str | Path | None = None,
+        on_schema_ready: Callable[[Schema], Schema | None] | None = None,
         **kwargs: Any,
     ) -> PipelineResult:
         """Run the full pipeline asynchronously.
 
         Args:
-            documents: Documents to process.
+            documents: Documents to process, or glob pattern strings
+                (e.g. ``["data/*.txt"]``) that will be auto-loaded.
             domain_hint: Optional hint about the document domain.
-            normalize_fields: Fields to normalize (None = skip normalization).
+            normalize_fields: Fields to normalize. Use ``"all"`` to auto-detect
+                string fields from the schema. ``None`` skips normalization.
             max_cost_usd: Budget limit — pipeline halts if exceeded.
             schema: Pre-existing Pydantic model — skips discovery if provided.
             checkpoint_dir: Directory for checkpoint state (enables resume).
         """
+        # Resolve glob patterns to Document objects
+        if documents and isinstance(documents[0], str):
+            from catchfly.loaders import resolve_documents
+
+            documents = resolve_documents(documents)  # type: ignore[arg-type]
+
         tracker = UsageTracker(max_cost_usd=max_cost_usd)
         result = PipelineResult()
         checkpoint = _Checkpoint(checkpoint_dir) if checkpoint_dir else None
+
+        # Wire usage tracking into strategies
+        if self.discovery is not None:
+            self.discovery._usage_callback = tracker.make_callback("discovery")  # type: ignore[attr-defined]
+        if self.extraction is not None:
+            self.extraction._usage_callback = tracker.make_callback("extraction")  # type: ignore[attr-defined]
+        if self.normalization is not None:
+            self.normalization._usage_callback = tracker.make_callback("normalization")  # type: ignore[attr-defined]
 
         try:
             # --- Discovery ---
@@ -148,6 +182,14 @@ class Pipeline:
                     json_schema=schema.model_json_schema(),
                     lineage=["user-provided"],
                 )
+
+            # --- Schema callback ---
+            if on_schema_ready is not None and result.schema is not None:
+                modified = on_schema_ready(result.schema)
+                if modified is not None:
+                    result.schema = modified
+                    extraction_model = modified.model
+                logger.info("Pipeline: on_schema_ready callback executed")
 
             # --- Extraction ---
             if extraction_model is not None and self.extraction is not None:
@@ -194,6 +236,23 @@ class Pipeline:
                     "(discovery failed or not configured)"
                 )
 
+            # --- Resolve normalize_fields="all" ---
+            if normalize_fields == "all" and result.schema is not None:
+                props = result.schema.json_schema.get("properties", {})
+                normalize_fields = [
+                    name
+                    for name, spec in props.items()
+                    if spec.get("type") == "string"
+                    or (
+                        spec.get("type") == "array"
+                        and spec.get("items", {}).get("type") == "string"
+                    )
+                ]
+                logger.info(
+                    "Pipeline: normalize_fields='all' resolved to %s",
+                    normalize_fields,
+                )
+
             # --- Normalization ---
             if normalize_fields and self.normalization is not None and result.records:
                 logger.info(
@@ -219,13 +278,14 @@ class Pipeline:
 
     def run(
         self,
-        documents: list[Document],
+        documents: list[Document] | list[str],
         *,
         domain_hint: str | None = None,
-        normalize_fields: list[str] | None = None,
+        normalize_fields: list[str] | Literal["all"] | None = None,
         max_cost_usd: float | None = None,
         schema: type[BaseModel] | None = None,
         checkpoint_dir: str | Path | None = None,
+        on_schema_ready: Callable[[Schema], Schema | None] | None = None,
         **kwargs: Any,
     ) -> PipelineResult:
         """Run the full pipeline synchronously."""
@@ -237,6 +297,7 @@ class Pipeline:
                 max_cost_usd=max_cost_usd,
                 schema=schema,
                 checkpoint_dir=checkpoint_dir,
+                on_schema_ready=on_schema_ready,
                 **kwargs,
             )
         )
@@ -263,6 +324,21 @@ class Pipeline:
             "total": round(discovery_cost + extraction_cost + normalization_cost, 4),
         }
 
+    @staticmethod
+    def _iter_progress(
+        iterable: Any, *, verbose: bool, desc: str, total: int | None = None
+    ) -> Any:
+        """Wrap an iterable with tqdm if verbose=True and tqdm is available."""
+        if not verbose:
+            return iterable
+        try:
+            from tqdm.auto import tqdm  # type: ignore[import-untyped]
+
+            return tqdm(iterable, desc=desc, total=total)
+        except ImportError:
+            logger.debug("tqdm not installed, progress bars disabled")
+            return iterable
+
     async def _normalize_fields(
         self,
         records: list[Any],
@@ -278,7 +354,9 @@ class Pipeline:
         assert self.normalization is not None
         normalizations: dict[str, NormalizationResult] = {}
 
-        for field_name in fields:
+        for field_name in self._iter_progress(
+            fields, verbose=self.verbose, desc="Normalizing fields"
+        ):
             values: list[str] = []
             for record in records:
                 val = None

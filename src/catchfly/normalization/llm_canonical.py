@@ -157,6 +157,7 @@ class LLMCanonicalization(BaseModel):
             model=self.model,
             base_url=self.base_url,
             api_key=self.api_key,
+            usage_callback=getattr(self, "_usage_callback", None),
         )
 
         logger.info(

@@ -92,6 +92,7 @@ class LLMDirectExtraction(BaseModel):
             model=self.model,
             base_url=self.base_url,
             api_key=self.api_key,
+            usage_callback=getattr(self, "_usage_callback", None),
         )
 
         # Chunk documents
@@ -194,6 +195,7 @@ class LLMDirectExtraction(BaseModel):
                     chunk_index=doc.metadata.get("chunk_index"),
                     char_start=doc.metadata.get("char_start"),
                     char_end=doc.metadata.get("char_end"),
+                    confidence=round(max(0.1, 1.0 - attempt * 0.3), 2),
                 )
 
                 return record, provenance

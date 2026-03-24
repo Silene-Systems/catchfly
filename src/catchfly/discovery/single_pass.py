@@ -101,11 +101,15 @@ class SinglePassDiscovery(BaseModel):
             model=self.model,
             base_url=self.base_url,
             api_key=self.api_key,
+            usage_callback=getattr(self, "_usage_callback", None),
         )
 
+        user_content = _build_user_prompt(
+            sample, hint, max_doc_chars=self.max_doc_chars
+        )
         messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": _build_user_prompt(sample, hint, max_doc_chars=self.max_doc_chars)},
+            {"role": "user", "content": user_content},
         ]
 
         # Discovery output is itself a dynamic JSON Schema — tool calling

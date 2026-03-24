@@ -170,3 +170,31 @@ class TestLLMDirectExtraction:
     def test_parse_json_invalid(self) -> None:
         with pytest.raises(json.JSONDecodeError):
             LLMDirectExtraction._parse_json("not json")
+
+    async def test_confidence_first_attempt(self) -> None:
+        """Confidence should be 1.0 when extraction succeeds on first attempt."""
+        mock_llm = MockExtractionLLM()
+        extractor = LLMDirectExtraction(model="mock", max_retries=1)
+        _patch_extraction(extractor, mock_llm)
+        try:
+            result = await extractor.aextract(ProductReview, self._make_docs(1))
+            assert result.provenance[0].confidence == 1.0
+        finally:
+            _unpatch_extraction()
+
+    async def test_confidence_after_retry(self) -> None:
+        """Confidence should decrease after retries."""
+        bad_then_good = [
+            '{"bad": "json"}',
+            json.dumps({"title": "OK", "rating": 4, "pros": ["fine"]}),
+        ]
+        mock_llm = MockExtractionLLM(responses=bad_then_good)
+        extractor = LLMDirectExtraction(model="mock", max_retries=2)
+        _patch_extraction(extractor, mock_llm)
+        try:
+            result = await extractor.aextract(ProductReview, self._make_docs(1))
+            assert len(result.records) == 1
+            assert result.provenance[0].confidence is not None
+            assert result.provenance[0].confidence < 1.0
+        finally:
+            _unpatch_extraction()

@@ -120,6 +120,7 @@ class OntologyMapping(BaseModel):
                 model=self.reranking_model,
                 base_url=self.base_url,
                 api_key=self.api_key,
+                usage_callback=getattr(self, "_usage_callback", None),
             )
             matches = await self._rerank_batch(
                 llm_client, unique_values, nn_results, context_field
