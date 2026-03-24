@@ -146,11 +146,11 @@ class Pipeline:
 
         # Wire usage tracking into strategies
         if self.discovery is not None:
-            self.discovery._usage_callback = tracker.make_callback("discovery")  # type: ignore[attr-defined]
+            setattr(self.discovery, "_usage_callback", tracker.make_callback("discovery"))  # noqa: B010
         if self.extraction is not None:
-            self.extraction._usage_callback = tracker.make_callback("extraction")  # type: ignore[attr-defined]
+            setattr(self.extraction, "_usage_callback", tracker.make_callback("extraction"))  # noqa: B010
         if self.normalization is not None:
-            self.normalization._usage_callback = tracker.make_callback("normalization")  # type: ignore[attr-defined]
+            setattr(self.normalization, "_usage_callback", tracker.make_callback("normalization"))  # noqa: B010
 
         try:
             # --- Discovery ---

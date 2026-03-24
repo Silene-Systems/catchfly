@@ -7,7 +7,7 @@ import json
 import logging
 from typing import Any, Literal
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, PrivateAttr, ValidationError
 
 from catchfly._compat import run_sync
 from catchfly._types import Document, ExtractionResult, RecordProvenance
@@ -68,13 +68,19 @@ class LLMDirectExtraction(BaseModel):
 
     model: str = "gpt-5.4-mini"
     chunk_size: int = 4000
+    """4000 chars (~1000 tokens) fits most models' context with room for schema + prompt."""
     chunk_overlap: int = 200
+    """200 chars overlap prevents splitting entities at chunk boundaries."""
     chunking_strategy: Any | None = None
     max_retries: int = 3
+    """3 retries with validation feedback is sufficient for most extraction errors."""
     batch_size: int = 10
+    """10 concurrent requests balances throughput vs rate-limit pressure."""
     on_error: Literal["raise", "skip", "collect"] = "raise"
     base_url: str | None = None
     api_key: str | None = None
+
+    _usage_callback: Any = PrivateAttr(default=None)
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -100,7 +106,7 @@ class LLMDirectExtraction(BaseModel):
             model=self.model,
             base_url=self.base_url,
             api_key=self.api_key,
-            usage_callback=getattr(self, "_usage_callback", None),
+            usage_callback=self._usage_callback,
         )
 
         # Chunk documents

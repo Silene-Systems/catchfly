@@ -7,11 +7,11 @@ import logging
 import random
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 from catchfly._compat import run_sync
 from catchfly._types import Document, Schema
-from catchfly.exceptions import DiscoveryError
+from catchfly.exceptions import DiscoveryError, SchemaError
 from catchfly.providers.llm import LLMResponse, OpenAICompatibleClient
 from catchfly.schema.converters import json_schema_to_pydantic
 
@@ -28,7 +28,8 @@ Rules:
 - Include "required" array for fields present in most documents.
 - Use appropriate types: string, integer, number, boolean, array.
 - For array fields, include "items" with the element type.
-- Keep the schema flat where possible; nest only when semantically necessary.\
+- Keep the schema flat where possible; nest only when semantically necessary.
+- Prefer fewer, high-value fields over many granular ones.\
 """
 
 
@@ -37,10 +38,25 @@ def _build_user_prompt(
     domain_hint: str | None = None,
     *,
     max_doc_chars: int = 3000,
+    max_fields: int | None = None,
+    suggested_fields: list[str] | None = None,
 ) -> str:
     parts: list[str] = []
     if domain_hint:
         parts.append(f"Domain context: {domain_hint}\n")
+
+    if suggested_fields:
+        fields_str = ", ".join(suggested_fields)
+        parts.append(
+            f"The schema should include these fields: {fields_str}. "
+            "You may add additional fields if clearly present in the documents.\n"
+        )
+
+    if max_fields is not None:
+        parts.append(
+            f"Limit the schema to at most {max_fields} fields. "
+            "Focus on the most important, high-value fields.\n"
+        )
 
     parts.append(f"Here are {len(documents)} sample documents:\n")
     for i, doc in enumerate(documents):
@@ -66,11 +82,20 @@ class SinglePassDiscovery(BaseModel):
 
     model: str = "gpt-5.4-mini"
     num_samples: int = 5
+    """5 samples provides good schema coverage without excessive prompt length."""
     max_doc_chars: int = 3000
+    """Truncation limit per document — fits ~750 tokens, balancing context vs cost."""
     domain_hint: str | None = None
+    max_fields: int | None = None
+    """Maximum number of fields in the discovered schema. None = no limit."""
+    suggested_fields: list[str] | None = None
+    """Field names to include in the schema. LLM may add others if found in documents."""
     temperature: float = 0.7
+    """Higher temperature encourages discovering diverse field types."""
     base_url: str | None = None
     api_key: str | None = None
+
+    _usage_callback: Any = PrivateAttr(default=None)
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -101,11 +126,15 @@ class SinglePassDiscovery(BaseModel):
             model=self.model,
             base_url=self.base_url,
             api_key=self.api_key,
-            usage_callback=getattr(self, "_usage_callback", None),
+            usage_callback=self._usage_callback,
         )
 
         user_content = _build_user_prompt(
-            sample, hint, max_doc_chars=self.max_doc_chars
+            sample,
+            hint,
+            max_doc_chars=self.max_doc_chars,
+            max_fields=self.max_fields,
+            suggested_fields=self.suggested_fields,
         )
         messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
@@ -200,10 +229,11 @@ class SinglePassDiscovery(BaseModel):
         """Try to build a Pydantic model from JSON Schema, return None on failure."""
         try:
             return json_schema_to_pydantic(json_schema, "DiscoveredSchema")
-        except Exception:
+        except (SchemaError, ValueError, TypeError) as e:
             logger.warning(
                 "Could not create Pydantic model from discovered schema. "
-                "Falling back to JSON Schema only.",
+                "Falling back to JSON Schema only: %s",
+                e,
                 exc_info=True,
             )
             return None

@@ -35,6 +35,7 @@ class CompositeNormalization:
     ) -> None:
         self._field_strategies = field_strategies
         self._default = default
+        self._usage_callback: Any = None
 
     async def anormalize(
         self,
@@ -51,9 +52,9 @@ class CompositeNormalization:
             )
 
         # Propagate usage callback if set on composite
-        usage_cb = getattr(self, "_usage_callback", None)
+        usage_cb = self._usage_callback
         if usage_cb is not None and not hasattr(strategy, "_usage_callback"):
-            strategy._usage_callback = usage_cb  # type: ignore[attr-defined]
+            strategy._usage_callback = usage_cb
 
         logger.debug(
             "CompositeNormalization: routing field '%s' to %s",

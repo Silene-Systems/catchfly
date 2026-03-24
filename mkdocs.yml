@@ -39,6 +39,7 @@ nav:
       - Data Extraction: guides/extraction.md
       - Normalization: guides/normalization.md
       - Pipeline: guides/pipeline.md
+  - Cookbook: cookbook/index.md
   - API Reference:
       - Pipeline: api/pipeline.md
       - Discovery: api/discovery.md

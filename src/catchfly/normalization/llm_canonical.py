@@ -7,7 +7,7 @@ import logging
 from collections import Counter
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 from catchfly._compat import run_sync
 from catchfly._types import NormalizationResult
@@ -121,12 +121,18 @@ class LLMCanonicalization(BaseModel):
 
     model: str = "gpt-5.4-mini"
     batch_size: int = 50
+    """50 values per map-reduce batch — fits in a single prompt without truncation."""
     max_values_per_prompt: int = 200
+    """Below 200 unique values, a single LLM call suffices; above triggers map-reduce."""
     base_url: str | None = None
     api_key: str | None = None
     temperature: float = 0.1
+    """Low temperature for deterministic grouping decisions."""
     hierarchical_merge: bool = True
     hierarchical_merge_rounds: int = 1
+    """1 round is usually sufficient; diminishing returns beyond 2."""
+
+    _usage_callback: Any = PrivateAttr(default=None)
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -157,7 +163,7 @@ class LLMCanonicalization(BaseModel):
             model=self.model,
             base_url=self.base_url,
             api_key=self.api_key,
-            usage_callback=getattr(self, "_usage_callback", None),
+            usage_callback=self._usage_callback,
         )
 
         logger.info(

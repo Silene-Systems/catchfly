@@ -76,10 +76,13 @@ class EmbeddingClustering(BaseModel):
 
     embedding_model: str = "text-embedding-3-small"
     similarity_threshold: float = 0.8
+    """0.8 cosine similarity threshold — empirically effective for surface-form variants."""
     clustering_algorithm: str = "hdbscan"
     min_cluster_size: int = 2
+    """2 = even a pair of similar values forms a cluster."""
     reduce_dimensions: bool = True
     umap_n_components: int = 32
+    """32 dims preserves local structure while speeding up clustering (OpenAI embeds are 1536d)."""
     base_url: str | None = None
     api_key: str | None = None
 

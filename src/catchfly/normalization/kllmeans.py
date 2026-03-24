@@ -14,10 +14,11 @@ import math
 from collections import Counter
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 from catchfly._compat import run_sync
 from catchfly._types import NormalizationResult
+from catchfly.exceptions import ProviderError
 from catchfly.providers.embeddings import OpenAIEmbeddingClient
 from catchfly.providers.llm import OpenAICompatibleClient
 
@@ -65,13 +66,19 @@ class KLLMeansClustering(BaseModel):
     """
 
     num_clusters: int | None = None
+    """None = auto-detect via silhouette score over [2, sqrt(n)]."""
     embedding_model: str = "text-embedding-3-small"
     summarization_model: str = "gpt-5.4-mini"
     num_iterations: int = 10
+    """10 iterations is sufficient for convergence on typical IE datasets."""
     summarize_every: int = 3
+    """LLM summary every 3 iterations balances centroid quality vs API cost."""
     max_members_in_prompt: int = 50
+    """Limits prompt size to ~2k tokens for cluster summaries."""
     base_url: str | None = None
     api_key: str | None = None
+
+    _usage_callback: Any = PrivateAttr(default=None)
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -120,7 +127,7 @@ class KLLMeansClustering(BaseModel):
             model=self.summarization_model,
             base_url=self.base_url,
             api_key=self.api_key,
-            usage_callback=getattr(self, "_usage_callback", None),
+            usage_callback=self._usage_callback,
         )
 
         assignments = np.zeros(len(unique_values), dtype=int)
@@ -290,11 +297,12 @@ class KLLMeansClustering(BaseModel):
                     temperature=0.0,
                 )
                 summaries.append(response.content.strip())
-            except Exception:
+            except (ProviderError, ValueError) as e:
                 logger.warning(
                     "KLLMeansClustering: summary failed for cluster %d, "
-                    "falling back to first member",
+                    "falling back to first member: %s",
                     i,
+                    e,
                     exc_info=True,
                 )
                 summaries.append(members[0])
@@ -335,11 +343,12 @@ class KLLMeansClustering(BaseModel):
                     temperature=0.0,
                 )
                 names.append(response.content.strip())
-            except Exception:
+            except (ProviderError, ValueError) as e:
                 logger.warning(
                     "KLLMeansClustering: canonical name generation failed for cluster %d, "
-                    "falling back to most frequent member",
+                    "falling back to most frequent member: %s",
                     i,
+                    e,
                     exc_info=True,
                 )
                 counter = Counter(members)

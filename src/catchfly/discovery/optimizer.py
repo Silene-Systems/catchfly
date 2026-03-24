@@ -12,11 +12,11 @@ import json
 import logging
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 from catchfly._compat import run_sync
 from catchfly._types import Document, Schema
-from catchfly.exceptions import DiscoveryError
+from catchfly.exceptions import DiscoveryError, ProviderError
 from catchfly.providers.llm import OpenAICompatibleClient
 
 logger = logging.getLogger(__name__)
@@ -90,12 +90,19 @@ class SchemaOptimizer(BaseModel):
 
     model: str = "gpt-5.4-mini"
     num_iterations: int = 5
+    """5 iterations balances enrichment quality vs LLM cost (PARSE paper default)."""
     max_docs_per_iteration: int = 10
+    """10 docs per iteration gives sufficient signal without excessive API calls."""
     low_coverage_threshold: float = 0.8
+    """Fields below 80% coverage are flagged as needing better descriptions."""
     max_doc_chars: int = 3000
+    """Truncation limit per document — fits ~750 tokens, balancing context vs cost."""
     base_url: str | None = None
     api_key: str | None = None
     temperature: float = 0.3
+    """Low temperature for deterministic enrichment suggestions."""
+
+    _usage_callback: Any = PrivateAttr(default=None)
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -125,7 +132,7 @@ class SchemaOptimizer(BaseModel):
             model=self.model,
             base_url=self.base_url,
             api_key=self.api_key,
-            usage_callback=getattr(self, "_usage_callback", None),
+            usage_callback=self._usage_callback,
         )
 
         field_metadata: dict[str, dict[str, Any]] = dict(working_schema.field_metadata)
@@ -229,10 +236,11 @@ class SchemaOptimizer(BaseModel):
                     doc.id or "(no id)",
                 )
                 results.append({})
-            except Exception:
+            except (ProviderError, ValueError, KeyError, TypeError) as e:
                 logger.debug(
-                    "SchemaOptimizer: extraction failed for doc '%s'",
+                    "SchemaOptimizer: extraction failed for doc '%s': %s",
                     doc.id or "(no id)",
+                    e,
                     exc_info=True,
                 )
                 results.append({})
@@ -295,10 +303,11 @@ class SchemaOptimizer(BaseModel):
             data = self._parse_enrichment(response.content)
             fields: dict[str, dict[str, Any]] = data.get("fields", {})
             return fields
-        except Exception:
+        except (ProviderError, json.JSONDecodeError, ValueError, KeyError) as e:
             logger.warning(
-                "SchemaOptimizer: failed to parse enrichment response in iteration %d",
+                "SchemaOptimizer: failed to parse enrichment response in iteration %d: %s",
                 iteration,
+                e,
                 exc_info=True,
             )
             return {}
@@ -331,4 +340,5 @@ class SchemaOptimizer(BaseModel):
                 lineage=["user-provided"],
             )
 
-        raise DiscoveryError(f"Expected Schema or Pydantic model, got {type(schema)}")
+        msg = f"Expected Schema or Pydantic model, got {type(schema)}"
+        raise DiscoveryError(msg)

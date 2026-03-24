@@ -139,3 +139,66 @@ class TestSinglePassDiscovery:
         # Empty properties should cause failure
         model = SinglePassDiscovery._build_pydantic_model({"type": "object"})
         assert model is None
+
+
+class TestBuildUserPrompt:
+    """Tests for prompt construction with max_fields and suggested_fields."""
+
+    def _make_docs(self, n: int = 2) -> list[Document]:
+        return [
+            Document(content=f"Document {i} about something", id=f"doc{i}")
+            for i in range(n)
+        ]
+
+    def test_basic_prompt(self) -> None:
+        from catchfly.discovery.single_pass import _build_user_prompt
+
+        prompt = _build_user_prompt(self._make_docs())
+        assert "sample documents" in prompt
+        assert "Document 1" in prompt
+
+    def test_domain_hint_included(self) -> None:
+        from catchfly.discovery.single_pass import _build_user_prompt
+
+        prompt = _build_user_prompt(self._make_docs(), domain_hint="Medical reports")
+        assert "Domain context: Medical reports" in prompt
+
+    def test_max_fields_included(self) -> None:
+        from catchfly.discovery.single_pass import _build_user_prompt
+
+        prompt = _build_user_prompt(self._make_docs(), max_fields=7)
+        assert "at most 7 fields" in prompt
+        assert "most important" in prompt
+
+    def test_suggested_fields_included(self) -> None:
+        from catchfly.discovery.single_pass import _build_user_prompt
+
+        prompt = _build_user_prompt(
+            self._make_docs(),
+            suggested_fields=["product_name", "rating", "price"],
+        )
+        assert "product_name" in prompt
+        assert "rating" in prompt
+        assert "price" in prompt
+        assert "should include these fields" in prompt
+
+    def test_all_constraints_combined(self) -> None:
+        from catchfly.discovery.single_pass import _build_user_prompt
+
+        prompt = _build_user_prompt(
+            self._make_docs(),
+            domain_hint="E-commerce",
+            max_fields=5,
+            suggested_fields=["brand", "category"],
+        )
+        assert "Domain context: E-commerce" in prompt
+        assert "at most 5 fields" in prompt
+        assert "brand" in prompt
+        assert "category" in prompt
+
+    def test_no_constraints(self) -> None:
+        from catchfly.discovery.single_pass import _build_user_prompt
+
+        prompt = _build_user_prompt(self._make_docs())
+        assert "at most" not in prompt
+        assert "should include these fields" not in prompt

@@ -9,11 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 from catchfly._compat import run_sync
 from catchfly._types import NormalizationResult
-from catchfly.exceptions import NormalizationError
+from catchfly.exceptions import NormalizationError, ProviderError
 from catchfly.ontology.csv_json import CSVSource, JSONSource
 from catchfly.ontology.hpo import HPOSource
 from catchfly.ontology.index import OntologyIndex
@@ -64,11 +64,16 @@ class OntologyMapping(BaseModel):
     embedding_model: str = "text-embedding-3-small"
     reranking_model: str | None = "gpt-5.4-mini"
     top_k: int = 5
+    """5 nearest neighbors provides sufficient recall without excessive reranking cost."""
     confidence_threshold: float = 0.0
+    """0.0 = accept all matches; increase to filter low-confidence mappings."""
     reranking_concurrency: int = 30
+    """30 concurrent LLM calls balances throughput vs rate-limit pressure."""
     cache_dir: str | None = None
     base_url: str | None = None
     api_key: str | None = None
+
+    _usage_callback: Any = PrivateAttr(default=None)
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -120,7 +125,7 @@ class OntologyMapping(BaseModel):
                 model=self.reranking_model,
                 base_url=self.base_url,
                 api_key=self.api_key,
-                usage_callback=getattr(self, "_usage_callback", None),
+                usage_callback=self._usage_callback,
             )
             matches = await self._rerank_batch(
                 llm_client, unique_values, nn_results, context_field
@@ -273,10 +278,11 @@ class OntologyMapping(BaseModel):
                 return self._parse_rerank_response(
                     response.content, entry_lookup, candidates
                 )
-            except Exception:
+            except (ProviderError, json.JSONDecodeError, ValueError, KeyError) as e:
                 logger.warning(
-                    "OntologyMapping: reranking failed for '%s', using NN top-1",
+                    "OntologyMapping: reranking failed for '%s', using NN top-1: %s",
                     value,
+                    e,
                     exc_info=True,
                 )
                 return _OntologyMatch(

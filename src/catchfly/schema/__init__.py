@@ -8,3 +8,7 @@ __all__ = [
     "json_schema_to_pydantic",
     "pydantic_to_json_schema",
 ]
+
+
+def __dir__() -> list[str]:
+    return __all__

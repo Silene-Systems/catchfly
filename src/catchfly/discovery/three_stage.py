@@ -12,12 +12,12 @@ import logging
 import random
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 from catchfly._compat import run_sync
 from catchfly._types import Document, Schema
 from catchfly.discovery.single_pass import SinglePassDiscovery
-from catchfly.exceptions import DiscoveryError
+from catchfly.exceptions import DiscoveryError, ProviderError, SchemaError
 from catchfly.providers.llm import OpenAICompatibleClient
 
 logger = logging.getLogger(__name__)
@@ -71,13 +71,24 @@ class ThreeStageDiscovery(BaseModel):
 
     model: str = "gpt-5.4-mini"
     stage1_samples: int = 3
+    """Stage 1 uses few docs (2-3) to avoid over-fitting the initial schema."""
     stage2_samples: int = 10
+    """Stage 2 uses a moderate sample to catch gaps without excessive LLM cost."""
     stage3_samples: int = 50
+    """Stage 3 uses a larger sample to validate coverage at near-corpus scale."""
     max_doc_chars: int = 3000
+    """Truncation limit per document — fits ~750 tokens, balancing context vs cost."""
+    max_fields: int | None = None
+    """Maximum number of fields in the discovered schema. None = no limit."""
+    suggested_fields: list[str] | None = None
+    """Field names to include in the schema. LLM may add others if found in documents."""
     human_review: bool = False
     base_url: str | None = None
     api_key: str | None = None
     temperature: float = 0.3
+    """Low temperature for deterministic schema proposals."""
+
+    _usage_callback: Any = PrivateAttr(default=None)
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -96,7 +107,7 @@ class ThreeStageDiscovery(BaseModel):
             model=self.model,
             base_url=self.base_url,
             api_key=self.api_key,
-            usage_callback=getattr(self, "_usage_callback", None),
+            usage_callback=self._usage_callback,
         )
 
         # --- Stage 1: Initial schema ---
@@ -171,6 +182,8 @@ class ThreeStageDiscovery(BaseModel):
         sp = SinglePassDiscovery(
             model=self.model,
             num_samples=self.stage1_samples,
+            max_fields=self.max_fields,
+            suggested_fields=self.suggested_fields,
             base_url=self.base_url,
             api_key=self.api_key,
             temperature=self.temperature,
@@ -211,10 +224,11 @@ class ThreeStageDiscovery(BaseModel):
                     doc.id or "(no id)",
                 )
                 results.append({})
-            except Exception:
+            except (ProviderError, ValueError, KeyError, TypeError) as e:
                 logger.debug(
-                    "ThreeStageDiscovery: extraction failed for doc '%s'",
+                    "ThreeStageDiscovery: extraction failed for doc '%s': %s",
                     doc.id or "(no id)",
+                    e,
                     exc_info=True,
                 )
                 results.append({})
@@ -241,8 +255,8 @@ class ThreeStageDiscovery(BaseModel):
                 temperature=self.temperature,
             )
             return self._parse_changes(response.content)
-        except Exception:
-            logger.warning("ThreeStageDiscovery: failed to parse refinement", exc_info=True)
+        except (ProviderError, json.JSONDecodeError, ValueError, KeyError) as e:
+            logger.warning("ThreeStageDiscovery: failed to parse refinement: %s", e, exc_info=True)
             return {}
 
     # ------------------------------------------------------------------
@@ -358,8 +372,12 @@ class ThreeStageDiscovery(BaseModel):
         model = None
         try:
             model = json_schema_to_pydantic(json_schema, "DiscoveredSchema")
-        except Exception:
-            logger.warning("ThreeStageDiscovery: could not build Pydantic model", exc_info=True)
+        except (SchemaError, ValueError, TypeError) as e:
+            logger.warning(
+                "ThreeStageDiscovery: could not build Pydantic model: %s",
+                e,
+                exc_info=True,
+            )
 
         lineage = [f"ThreeStageDiscovery:stage{stage}"]
 

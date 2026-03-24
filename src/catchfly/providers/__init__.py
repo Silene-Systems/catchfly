@@ -10,3 +10,7 @@ __all__ = [
     "OpenAICompatibleClient",
     "OpenAIEmbeddingClient",
 ]
+
+
+def __dir__() -> list[str]:
+    return __all__
