@@ -7,7 +7,7 @@ Catchfly offers three discovery strategies, from simple to sophisticated.
 One LLM call proposes a JSON Schema from sample documents.
 
 ```python
-from catchfly.discovery.single_pass import SinglePassDiscovery
+from catchfly.discovery import SinglePassDiscovery
 
 discovery = SinglePassDiscovery(
     model="gpt-5.4-mini",
@@ -35,7 +35,7 @@ Progressive refinement inspired by SCHEMA-MINER:
 3. **Stage 3 — Expansion:** Test against 50+ docs, add recurring fields, flag rare ones
 
 ```python
-from catchfly.discovery.three_stage import ThreeStageDiscovery
+from catchfly.discovery import ThreeStageDiscovery
 
 discovery = ThreeStageDiscovery(
     model="gpt-5.4-mini",
@@ -60,7 +60,7 @@ print(report["stages_completed"])  # 3
 Iteratively enriches field descriptions by analyzing extraction errors:
 
 ```python
-from catchfly.discovery.optimizer import SchemaOptimizer
+from catchfly.discovery import SchemaOptimizer
 
 optimizer = SchemaOptimizer(
     model="gpt-5.4-mini",
@@ -79,6 +79,6 @@ for field, meta in enriched.field_metadata.items():
     print(f"  synonyms: {meta.get('synonyms')}")
 ```
 
-The enriched `field_metadata` can be passed to `KLLMeansClustering` as seed centroids — this is the bridge between discovery and normalization.
+The enriched `field_metadata` is passed automatically to `LLMCanonicalization` when used in a pipeline — providing schema-aware prompting for better normalization.
 
-**Best for:** Improving extraction quality, preparing for kLLMmeans normalization.
+**Best for:** Improving extraction quality, providing schema context for LLM normalization.

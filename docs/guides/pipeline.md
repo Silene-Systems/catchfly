@@ -15,7 +15,7 @@ results = pipeline.run(
 )
 ```
 
-`Pipeline.quick()` creates: **SinglePassDiscovery + LLMDirectExtraction + EmbeddingClustering**.
+`Pipeline.quick()` creates: **SinglePassDiscovery + LLMDirectExtraction + LLMCanonicalization**.
 
 ## Custom Pipeline
 
@@ -23,9 +23,9 @@ Choose your own strategies:
 
 ```python
 from catchfly import Pipeline
-from catchfly.discovery.three_stage import ThreeStageDiscovery
-from catchfly.extraction.llm_direct import LLMDirectExtraction
-from catchfly.normalization.llm_canonical import LLMCanonicalization
+from catchfly.discovery import ThreeStageDiscovery
+from catchfly.extraction import LLMDirectExtraction
+from catchfly.normalization import LLMCanonicalization
 
 pipeline = Pipeline(
     discovery=ThreeStageDiscovery(model="gpt-5.4-mini"),

@@ -33,7 +33,7 @@ print(results.to_dataframe())        # Extracted data as DataFrame
 print(results.report)                # Cost & usage stats
 ```
 
-`Pipeline.quick()` uses **SinglePassDiscovery + LLMDirectExtraction + EmbeddingClustering** — the lightest, fastest combination.
+`Pipeline.quick()` uses **SinglePassDiscovery + LLMDirectExtraction + LLMCanonicalization** — the recommended default with schema-aware normalization.
 
 ## 3. Available Demo Datasets
 

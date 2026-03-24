@@ -7,7 +7,7 @@ Catchfly offers four normalization strategies for cleaning up messy extracted va
 Map values to standardized ontology terms (HPO, ICD-10, custom). Uses embedding nearest-neighbor search with optional LLM reranking.
 
 ```python
-from catchfly.normalization.ontology_mapping import OntologyMapping
+from catchfly.normalization import OntologyMapping
 
 normalizer = OntologyMapping(
     ontology="hpo",                        # or path to .obo, .csv, .json
@@ -66,7 +66,7 @@ normalizer = OntologyMapping(
 LLM groups synonyms and assigns canonical names. Map-reduce for large sets with hierarchical merge for cross-batch consolidation.
 
 ```python
-from catchfly.normalization.llm_canonical import LLMCanonicalization
+from catchfly.normalization import LLMCanonicalization
 
 normalizer = LLMCanonicalization(
     model="gpt-5.4-mini",
@@ -102,7 +102,7 @@ Set `hierarchical_merge=False` to use only case-insensitive string matching (fas
 When `field_metadata` from `SchemaOptimizer` is provided, it enriches the LLM prompt with field descriptions, examples, and constraints:
 
 ```python
-from catchfly.discovery.optimizer import SchemaOptimizer
+from catchfly.discovery import SchemaOptimizer
 
 # Enrich schema
 optimizer = SchemaOptimizer(model="gpt-5.4-mini", num_iterations=3)
@@ -127,7 +127,7 @@ The pipeline passes `field_metadata` automatically when both `SchemaOptimizer` a
 Embed values → cluster → pick canonical name per cluster. No LLM needed during clustering.
 
 ```python
-from catchfly.normalization.embedding_cluster import EmbeddingClustering
+from catchfly.normalization import EmbeddingClustering
 
 normalizer = EmbeddingClustering(
     embedding_model="text-embedding-3-small",
@@ -154,7 +154,7 @@ print(result.explain("NYC"))  # Human-readable explanation
 k-means in embedding space with periodic LLM-generated textual centroids.
 
 ```python
-from catchfly.normalization.kllmeans import KLLMeansClustering
+from catchfly.normalization import KLLMeansClustering
 
 normalizer = KLLMeansClustering(
     num_clusters=5,           # or None for auto-detection via silhouette

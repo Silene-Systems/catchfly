@@ -5,7 +5,7 @@
 Extracts structured data from documents using LLM with tool calling.
 
 ```python
-from catchfly.extraction.llm_direct import LLMDirectExtraction
+from catchfly.extraction import LLMDirectExtraction
 from pydantic import BaseModel
 
 class Product(BaseModel):
