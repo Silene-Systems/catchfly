@@ -96,6 +96,32 @@ _DEFAULT_MAX_RETRIES = 3
 _RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
 _INITIAL_BACKOFF = 1.0
 
+_PROVIDER_ROUTES: dict[str, tuple[str, str]] = {
+    "anthropic": ("https://api.anthropic.com/v1/", "ANTHROPIC_API_KEY"),
+    "mistral": ("https://api.mistral.ai/v1/", "MISTRAL_API_KEY"),
+    "groq": ("https://api.groq.com/openai/v1/", "GROQ_API_KEY"),
+}
+
+
+def _resolve_provider(
+    model: str,
+    base_url: str | None,
+    api_key: str | None,
+) -> tuple[str, str | None, str]:
+    """Strip provider prefix from model and resolve base_url / api_key.
+
+    Explicit ``base_url`` and ``api_key`` always take precedence.
+    Unknown prefixes (e.g. ``mycompany/foo``) are left as-is.
+    """
+    prefix, _, suffix = model.partition("/")
+    route = _PROVIDER_ROUTES.get(prefix) if suffix else None
+
+    if route:
+        provider_base_url, env_var = route
+        return suffix, base_url or provider_base_url, api_key or os.environ.get(env_var, "")
+
+    return model, base_url, api_key or os.environ.get("OPENAI_API_KEY", "")
+
 
 class OpenAICompatibleClient:
     """LLM client for any OpenAI-compatible API endpoint.
@@ -119,9 +145,7 @@ class OpenAICompatibleClient:
         timeout: float = 120.0,
         usage_callback: Any | None = None,
     ) -> None:
-        self.model = model
-        self.base_url = base_url
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        self.model, self.base_url, self.api_key = _resolve_provider(model, base_url, api_key)
         self.max_retries = max_retries
         self.timeout = timeout
         self.usage_callback = usage_callback

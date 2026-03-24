@@ -65,7 +65,7 @@ class OntologyMapping(BaseModel):
     reranking_model: str | None = "gpt-5.4-mini"
     top_k: int = 5
     confidence_threshold: float = 0.0
-    reranking_concurrency: int = 10
+    reranking_concurrency: int = 30
     cache_dir: str | None = None
     base_url: str | None = None
     api_key: str | None = None
@@ -202,11 +202,35 @@ class OntologyMapping(BaseModel):
     ) -> list[_OntologyMatch | None]:
         """Rerank NN candidates for each value via LLM."""
         sem = asyncio.Semaphore(self.reranking_concurrency)
+
+        # Use indexed tasks so we can return results in original order
+        async def _indexed(
+            idx: int, val: str, cands: list[tuple[OntologyEntry, float]]
+        ) -> tuple[int, _OntologyMatch | None]:
+            match = await self._rerank_one(client, sem, val, cands, context_field)
+            return idx, match
+
         tasks = [
-            self._rerank_one(client, sem, value, candidates, context_field)
-            for value, candidates in zip(values, nn_results, strict=True)
+            _indexed(i, val, cands)
+            for i, (val, cands) in enumerate(zip(values, nn_results, strict=True))
         ]
-        return list(await asyncio.gather(*tasks))
+
+        # Stream results with progress bar if tqdm is available
+        results: list[_OntologyMatch | None] = [None] * len(values)
+        try:
+            from tqdm.asyncio import tqdm_asyncio  # type: ignore[import-untyped]
+
+            for coro in tqdm_asyncio.as_completed(
+                tasks, desc="HPO reranking", total=len(tasks)
+            ):
+                idx, match = await coro
+                results[idx] = match
+        except ImportError:
+            for coro in asyncio.as_completed(tasks):
+                idx, match = await coro
+                results[idx] = match
+
+        return results
 
     async def _rerank_one(
         self,

@@ -69,6 +69,7 @@ class LLMDirectExtraction(BaseModel):
     model: str = "gpt-5.4-mini"
     chunk_size: int = 4000
     chunk_overlap: int = 200
+    chunking_strategy: Any | None = None
     max_retries: int = 3
     batch_size: int = 10
     on_error: Literal["raise", "skip", "collect"] = "raise"
@@ -79,13 +80,20 @@ class LLMDirectExtraction(BaseModel):
 
     async def aextract(
         self,
-        schema: type[BaseModel],
+        schema: type[BaseModel] | dict[str, Any],
         documents: list[Document],
         **kwargs: Any,
     ) -> ExtractionResult[Any]:
         """Extract structured data asynchronously."""
         if not documents:
             return ExtractionResult(records=[])
+
+        if isinstance(schema, dict):
+            from catchfly.schema.converters import json_schema_to_pydantic
+
+            schema = json_schema_to_pydantic(
+                schema, name=schema.get("title", "Extraction")
+            )
 
         json_schema = schema.model_json_schema()
         client = OpenAICompatibleClient(
@@ -97,9 +105,14 @@ class LLMDirectExtraction(BaseModel):
 
         # Chunk documents
         all_chunks: list[Document] = []
-        for doc in documents:
-            chunks = chunk_document(doc, self.chunk_size, self.chunk_overlap)
-            all_chunks.extend(chunks)
+        if self.chunking_strategy is not None:
+            for doc in documents:
+                all_chunks.extend(self.chunking_strategy.chunk(doc))
+        else:
+            for doc in documents:
+                all_chunks.extend(
+                    chunk_document(doc, self.chunk_size, self.chunk_overlap)
+                )
 
         logger.info(
             "LLMDirectExtraction: processing %d documents (%d chunks), model=%s",
@@ -156,7 +169,7 @@ class LLMDirectExtraction(BaseModel):
 
     def extract(
         self,
-        schema: type[BaseModel],
+        schema: type[BaseModel] | dict[str, Any],
         documents: list[Document],
         **kwargs: Any,
     ) -> ExtractionResult[Any]:
@@ -188,6 +201,7 @@ class LLMDirectExtraction(BaseModel):
 
             try:
                 raw_data = self._parse_json(response.content)
+                raw_data = self._coerce_nulls(raw_data, json_schema)
                 record = schema.model_validate(raw_data)
 
                 provenance = RecordProvenance(
@@ -238,4 +252,25 @@ class LLMDirectExtraction(BaseModel):
         if not isinstance(data, dict):
             msg = f"Expected JSON object, got {type(data).__name__}"
             raise json.JSONDecodeError(msg, text, 0)
+        return data
+
+    @staticmethod
+    def _coerce_nulls(
+        data: dict[str, Any], json_schema: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Replace null values with schema-appropriate defaults.
+
+        LLMs commonly return ``null`` for empty arrays/objects instead of
+        ``[]``/``{}``.  This coercion prevents unnecessary validation retries.
+        """
+        properties = json_schema.get("properties", {})
+        for key, value in data.items():
+            if value is not None:
+                continue
+            prop = properties.get(key, {})
+            prop_type = prop.get("type")
+            if prop_type == "array":
+                data[key] = []
+            elif prop_type == "object":
+                data[key] = {}
         return data

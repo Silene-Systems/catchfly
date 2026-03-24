@@ -182,6 +182,50 @@ class TestLLMDirectExtraction:
         finally:
             _unpatch_extraction()
 
+    async def test_chunking_strategy_param(self) -> None:
+        """LLMDirectExtraction uses chunking_strategy when provided."""
+        from catchfly.extraction.chunking_fixed import FixedSizeChunking
+
+        mock_llm = MockExtractionLLM()
+        strategy = FixedSizeChunking(chunk_size=50, overlap=10)
+        extractor = LLMDirectExtraction(
+            model="mock",
+            chunking_strategy=strategy,
+            max_retries=0,
+        )
+        _patch_extraction(extractor, mock_llm)
+        try:
+            long_doc = Document(content="x" * 200, id="long")
+            result = await extractor.aextract(ProductReview, [long_doc])
+            assert len(result.records) > 1
+            for prov in result.provenance:
+                assert prov.char_start is not None
+                assert prov.char_end is not None
+        finally:
+            _unpatch_extraction()
+
+    async def test_extract_with_dict_schema(self) -> None:
+        """extract() / aextract() accept a raw JSON Schema dict."""
+        mock_llm = MockExtractionLLM()
+        extractor = LLMDirectExtraction(model="mock", max_retries=0)
+        _patch_extraction(extractor, mock_llm)
+        try:
+            dict_schema = {
+                "title": "Review",
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "rating": {"type": "integer"},
+                    "pros": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["title", "rating", "pros"],
+            }
+            result = await extractor.aextract(dict_schema, self._make_docs(1))
+            assert len(result.records) == 1
+            assert result.records[0].title == "Great product"
+        finally:
+            _unpatch_extraction()
+
     async def test_confidence_after_retry(self) -> None:
         """Confidence should decrease after retries."""
         bad_then_good = [

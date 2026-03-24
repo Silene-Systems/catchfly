@@ -311,7 +311,16 @@ class Pipeline:
 
         n_docs = len(documents)
         avg_tokens = sum(len(d.content) // 4 for d in documents) / max(n_docs, 1)
-        n_chunks = estimate_chunks(documents)
+
+        # Use strategy-aware estimation if available
+        if (
+            self.extraction is not None
+            and hasattr(self.extraction, "chunking_strategy")
+            and self.extraction.chunking_strategy is not None
+        ):
+            n_chunks = self.extraction.chunking_strategy.estimate_chunks(documents)
+        else:
+            n_chunks = estimate_chunks(documents)
 
         discovery_cost = avg_tokens * 6 / 1_000_000 * 0.15
         extraction_cost = n_chunks * avg_tokens * 2 / 1_000_000 * 0.15

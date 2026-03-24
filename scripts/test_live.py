@@ -10,9 +10,9 @@ Available test suites:
     discovery     — SinglePassDiscovery + ThreeStageDiscovery
     optimizer     — SchemaOptimizer (PARSE-style enrichment)
     extraction    — LLMDirectExtraction (tool calling across providers)
-    normalization — EmbeddingClustering + LLMCanonicalization
-    kllmeans      — KLLMeansClustering (with and without schema seed)
-    pipeline      — Full pipeline end-to-end
+    normalization — EmbeddingClustering + LLMCanonicalization + OntologyMapping
+    kllmeans      — KLLMeansClustering
+    pipeline      — Full pipeline end-to-end (all 3 demo datasets)
     registry      — SchemaRegistry round-trip
     all           — Everything (default)
 """
@@ -143,8 +143,7 @@ def timed(fn: Any) -> tuple[Any, float]:
 def test_discovery(suite: TestSuite) -> None:
     """Test SinglePassDiscovery + ThreeStageDiscovery across providers."""
     from catchfly.demo import load_samples
-    from catchfly.discovery.single_pass import SinglePassDiscovery
-    from catchfly.discovery.three_stage import ThreeStageDiscovery
+    from catchfly.discovery import SinglePassDiscovery, ThreeStageDiscovery
 
     docs = load_samples("product_reviews")[:3]
 
@@ -200,7 +199,7 @@ def test_optimizer(suite: TestSuite) -> None:
     from pydantic import BaseModel
 
     from catchfly.demo import load_samples
-    from catchfly.discovery.optimizer import SchemaOptimizer
+    from catchfly.discovery import SchemaOptimizer
 
     p = first_available(*ALL_PROVIDERS)
     if not p:
@@ -241,7 +240,7 @@ def test_extraction(suite: TestSuite) -> None:
     from pydantic import BaseModel
 
     from catchfly.demo import load_samples
-    from catchfly.extraction.llm_direct import LLMDirectExtraction
+    from catchfly.extraction import LLMDirectExtraction
 
     class Review(BaseModel):
         product_name: str
@@ -274,15 +273,16 @@ def test_extraction(suite: TestSuite) -> None:
 
 
 def test_normalization(suite: TestSuite) -> None:
-    """Test EmbeddingClustering + LLMCanonicalization."""
+    """Test EmbeddingClustering + LLMCanonicalization + OntologyMapping."""
     p = first_available(OPENAI)  # needs embeddings
     if not p:
         suite.add("EmbeddingClustering", True, 0, "SKIPPED — no OPENAI_API_KEY")
         suite.add("LLMCanonicalization", True, 0, "SKIPPED")
+        suite.add("OntologyMapping", True, 0, "SKIPPED")
         return
 
     # --- EmbeddingClustering ---
-    from catchfly.normalization.embedding_cluster import EmbeddingClustering
+    from catchfly.normalization import EmbeddingClustering
 
     values = [
         "NYC",
@@ -319,7 +319,7 @@ def test_normalization(suite: TestSuite) -> None:
         )
 
     # --- LLMCanonicalization ---
-    from catchfly.normalization.llm_canonical import LLMCanonicalization
+    from catchfly.normalization import LLMCanonicalization
 
     llm_p = first_available(*ALL_PROVIDERS)
     if not llm_p:
@@ -342,19 +342,62 @@ def test_normalization(suite: TestSuite) -> None:
             f"{n_canonical} canonical",
         )
 
+    # --- OntologyMapping (custom JSON) ---
+    import json
+    import tempfile
+
+    from catchfly.normalization import OntologyMapping
+
+    # Create a small test ontology
+    ontology_entries = [
+        {"id": "HP:0001250", "name": "Seizure", "synonyms": ["Epileptic seizure", "Fits"]},
+        {"id": "HP:0001945", "name": "Fever", "synonyms": ["Pyrexia", "High temperature"]},
+        {"id": "HP:0002315", "name": "Headache", "synonyms": ["Cephalalgia", "Head pain"]},
+        {"id": "HP:0002019", "name": "Nausea", "synonyms": ["Feeling sick"]},
+        {"id": "HP:0001252", "name": "Hypotonia", "synonyms": ["Decreased muscle tone", "Low tone"]},
+    ]
+
+    test_values = ["seizures", "high temperature", "headache", "feeling sick", "low muscle tone"]
+
+    def run_om() -> Any:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(ontology_entries, f)
+            onto_path = f.name
+
+        om = OntologyMapping(
+            ontology=onto_path,
+            embedding_model="text-embedding-3-small",
+            reranking_model=p.model,
+            api_key=p.api_key,
+            top_k=3,
+        )
+        return om.normalize(test_values, context_field="phenotype")
+
+    result, elapsed = timed(run_om)
+    if isinstance(result, Exception):
+        suite.add("OntologyMapping", False, elapsed, str(result))
+    else:
+        mapped = sum(1 for v in test_values if result.mapping.get(v, v) != v)
+        mapping_str = ", ".join(f"{k}→{v}" for k, v in sorted(result.mapping.items()))
+        suite.add(
+            "OntologyMapping",
+            mapped >= 3,  # at least 3/5 should map
+            elapsed,
+            f"{mapped}/{len(test_values)} mapped: {mapping_str}",
+        )
+
 
 def test_kllmeans(suite: TestSuite) -> None:
-    """Test KLLMeansClustering — cold start and schema-seeded."""
+    """Test KLLMeansClustering."""
     p = first_available(OPENAI)
     if not p:
         suite.add("kLLMmeans", True, 0, "SKIPPED — no OPENAI_API_KEY")
         return
 
-    from catchfly.normalization.kllmeans import KLLMeansClustering
+    from catchfly.normalization import KLLMeansClustering
 
     values = ["cat", "cats", "kitten", "dog", "dogs", "puppy", "fish", "goldfish"]
 
-    # --- Cold start ---
     def run_cold() -> Any:
         kl = KLLMeansClustering(
             num_clusters=3,
@@ -368,46 +411,21 @@ def test_kllmeans(suite: TestSuite) -> None:
 
     result, elapsed = timed(run_cold)
     if isinstance(result, Exception):
-        suite.add("kLLMmeans:cold", False, elapsed, str(result))
+        suite.add("kLLMmeans", False, elapsed, str(result))
     else:
         n_clusters = result.metadata.get("k", "?")
         cat_canonical = result.mapping.get("cat", "?")
         dog_canonical = result.mapping.get("dog", "?")
         suite.add(
-            "kLLMmeans:cold",
+            "kLLMmeans",
             cat_canonical != dog_canonical,
             elapsed,
             f"k={n_clusters}, cat→{cat_canonical}, dog→{dog_canonical}",
         )
 
-    # --- Schema-seeded ---
-    def run_seeded() -> Any:
-        kl = KLLMeansClustering(
-            num_clusters=3,
-            embedding_model="text-embedding-3-small",
-            summarization_model=p.model,
-            api_key=p.api_key,
-            seed_from_schema=True,
-            num_iterations=5,
-            summarize_every=2,
-        )
-        metadata = {
-            "description": "Type of pet animal",
-            "examples": ["cat", "dog", "fish"],
-            "synonyms": ["feline", "canine", "aquatic"],
-        }
-        return kl.normalize(values, context_field="animal", field_metadata=metadata)
-
-    result, elapsed = timed(run_seeded)
-    if isinstance(result, Exception):
-        suite.add("kLLMmeans:seeded", False, elapsed, str(result))
-    else:
-        n_clusters = result.metadata.get("k", "?")
-        suite.add("kLLMmeans:seeded", True, elapsed, f"k={n_clusters}, schema-seeded init OK")
-
 
 def test_pipeline(suite: TestSuite) -> None:
-    """Test full pipeline end-to-end with normalization."""
+    """Test full pipeline end-to-end on all 3 demo datasets."""
     p = first_available(OPENAI)
     if not p:
         suite.add("Pipeline:full", True, 0, "SKIPPED — no OPENAI_API_KEY")
@@ -416,29 +434,54 @@ def test_pipeline(suite: TestSuite) -> None:
     from catchfly import Pipeline
     from catchfly.demo import load_samples
 
-    docs = load_samples("support_tickets")[:3]
+    demo_configs = [
+        {
+            "name": "product_reviews",
+            "hint": "Electronics product reviews",
+            "fields": ["pros"],
+            "n_docs": 3,
+        },
+        {
+            "name": "support_tickets",
+            "hint": "SaaS support tickets",
+            "fields": ["category", "priority"],
+            "n_docs": 3,
+        },
+        {
+            "name": "case_reports",
+            "hint": "Biomedical case reports about rare diseases",
+            "fields": ["diagnosis"],
+            "n_docs": 3,
+        },
+    ]
 
-    def run() -> Any:
-        pipeline = Pipeline.quick(model=p.model, base_url=p.base_url, api_key=p.api_key)
-        return pipeline.run(
-            docs,
-            domain_hint="SaaS support tickets",
-            normalize_fields=["category", "priority"],
-        )
+    for cfg in demo_configs:
+        docs = load_samples(cfg["name"])[: cfg["n_docs"]]
 
-    result, elapsed = timed(run)
-    if isinstance(result, Exception):
-        suite.add(f"Pipeline:full:{p.name}", False, elapsed, str(result))
-    else:
-        n_records = len(result.records)
-        n_norm = len(result.normalizations)
-        cols = list(result.to_dataframe().columns) if n_records else []
-        suite.add(
-            f"Pipeline:full:{p.name}",
-            n_records > 0,
-            elapsed,
-            f"{n_records} records, {n_norm} normalized fields, cols={cols[:5]}",
-        )
+        def run(c: dict[str, Any] = cfg, d: list[Any] = docs) -> Any:
+            pipeline = Pipeline.quick(
+                model=p.model, base_url=p.base_url, api_key=p.api_key, on_error="collect"
+            )
+            return pipeline.run(
+                d,
+                domain_hint=c["hint"],
+                normalize_fields=c["fields"],
+            )
+
+        result, elapsed = timed(run)
+        if isinstance(result, Exception):
+            suite.add(f"Pipeline:{cfg['name']}", False, elapsed, str(result))
+        else:
+            n_records = len(result.records)
+            n_errors = len(result.errors)
+            n_norm = len(result.normalizations)
+            n_fields = len(result.schema.json_schema.get("properties", {})) if result.schema else 0
+            suite.add(
+                f"Pipeline:{cfg['name']}",
+                n_records > 0,
+                elapsed,
+                f"{n_records} records, {n_errors} errors, {n_norm} normalized, {n_fields} schema fields",
+            )
 
 
 def test_registry(suite: TestSuite) -> None:
@@ -446,7 +489,7 @@ def test_registry(suite: TestSuite) -> None:
     import tempfile
 
     from catchfly._types import Schema
-    from catchfly.schema.registry import SchemaRegistry
+    from catchfly.schema import SchemaRegistry
 
     def run() -> Any:
         with tempfile.TemporaryDirectory() as tmp:
