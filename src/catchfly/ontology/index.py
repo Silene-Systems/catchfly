@@ -139,7 +139,8 @@ class OntologyIndex:
     # ------------------------------------------------------------------
 
     def _save_cache(self) -> None:
-        assert self._cache_path is not None
+        if self._cache_path is None:
+            raise ValueError("Cannot save cache: cache_path is not set")
         data = {
             "version": _CACHE_VERSION,
             "model": self._embedding_client.model,
@@ -153,7 +154,8 @@ class OntologyIndex:
         logger.info("OntologyIndex: saved cache to %s", self._cache_path)
 
     def _load_cache(self, np: Any) -> bool:
-        assert self._cache_path is not None
+        if self._cache_path is None:
+            raise ValueError("Cannot load cache: cache_path is not set")
         if not self._cache_path.exists():
             return False
 

@@ -175,12 +175,14 @@ class TestSchemaOptimizer:
             {"name": "B", "rare_field": None},
             {"name": "C", "rare_field": "value"},
         ]
-        analysis = SchemaOptimizer._analyze_gaps(schema, extracted)
+        optimizer = SchemaOptimizer(model="mock")
+        analysis = optimizer._analyze_gaps(schema, extracted)
         assert "rare_field" in analysis
         assert "low coverage" in analysis["rare_field"]
 
     def test_analyze_gaps_empty(self) -> None:
-        assert SchemaOptimizer._analyze_gaps({}, []) == {}
+        optimizer = SchemaOptimizer(model="mock")
+        assert optimizer._analyze_gaps({}, []) == {}
 
     def test_parse_enrichment_valid(self) -> None:
         content = json.dumps({"fields": {"name": {"description": "A name"}}})

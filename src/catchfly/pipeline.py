@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from catchfly._compat import run_sync
 from catchfly._types import (
@@ -39,7 +39,6 @@ class Pipeline:
         discovery: DiscoveryStrategy | None = None,
         extraction: ExtractionStrategy | None = None,
         normalization: NormalizationStrategy | None = None,
-        verbose: bool = True,
     ) -> None:
         """Initialize pipeline with optional strategy instances.
 
@@ -47,12 +46,10 @@ class Pipeline:
             discovery: Schema discovery strategy (or None to skip).
             extraction: Data extraction strategy (or None to skip).
             normalization: Value normalization strategy (or None to skip).
-            verbose: Enable progress logging.
         """
         self.discovery = discovery
         self.extraction = extraction
         self.normalization = normalization
-        self.verbose = verbose
 
     @classmethod
     def quick(
@@ -60,16 +57,22 @@ class Pipeline:
         model: str = "gpt-5.4-mini",
         base_url: str | None = None,
         api_key: str | None = None,
-        verbose: bool = True,
-        embedding_model: str = "text-embedding-3-small",
+        on_error: Literal["raise", "skip", "collect"] = "raise",
     ) -> Pipeline:
         """Create a pipeline with sensible defaults.
 
-        Uses SinglePassDiscovery + LLMDirectExtraction + EmbeddingClustering.
+        Uses SinglePassDiscovery + LLMDirectExtraction + LLMCanonicalization.
+
+        Args:
+            model: LLM model name to use across all stages.
+            base_url: Optional custom API base URL.
+            api_key: Optional API key.
+            on_error: Error handling mode for extraction
+                ("raise", "skip", or "collect").
         """
         from catchfly.discovery.single_pass import SinglePassDiscovery
         from catchfly.extraction.llm_direct import LLMDirectExtraction
-        from catchfly.normalization.embedding_cluster import EmbeddingClustering
+        from catchfly.normalization.llm_canonical import LLMCanonicalization
 
         return cls(
             discovery=SinglePassDiscovery(
@@ -81,13 +84,13 @@ class Pipeline:
                 model=model,
                 base_url=base_url,
                 api_key=api_key,
+                on_error=on_error,
             ),
-            normalization=EmbeddingClustering(
-                embedding_model=embedding_model,
+            normalization=LLMCanonicalization(
+                model=model,
                 base_url=base_url,
                 api_key=api_key,
             ),
-            verbose=verbose,
         )
 
     async def arun(

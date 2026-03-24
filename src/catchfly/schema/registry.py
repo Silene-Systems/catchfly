@@ -194,11 +194,11 @@ class SchemaRegistry:
                         name=name,
                     )
                 )
-        except Exception:
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
             logger.warning(
-                "SchemaRegistry: failed to load from %s",
+                "SchemaRegistry: failed to load from %s: %s",
                 self._persist_path,
-                exc_info=True,
+                exc,
             )
 
 

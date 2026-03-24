@@ -90,6 +90,9 @@ class SchemaOptimizer(BaseModel):
 
     model: str = "gpt-5.4-mini"
     num_iterations: int = 5
+    max_docs_per_iteration: int = 10
+    low_coverage_threshold: float = 0.8
+    max_doc_chars: int = 3000
     base_url: str | None = None
     api_key: str | None = None
     temperature: float = 0.3
@@ -198,12 +201,12 @@ class SchemaOptimizer(BaseModel):
         schema_str = json.dumps(json_schema, indent=2)
         results: list[dict[str, Any]] = []
 
-        for doc in documents[:10]:  # Cap at 10 docs per iteration
+        for doc in documents[:self.max_docs_per_iteration]:
             prompt = (
                 f"Extract structured data from this document according to "
                 f"the JSON Schema below.\n\n"
                 f"Schema:\n```json\n{schema_str}\n```\n\n"
-                f"Document:\n---\n{doc.content[:3000]}\n---\n\n"
+                f"Document:\n---\n{doc.content[:self.max_doc_chars]}\n---\n\n"
                 f"Output ONLY the extracted JSON."
             )
 
@@ -219,14 +222,24 @@ class SchemaOptimizer(BaseModel):
                 data = json.loads(response.content)
                 if isinstance(data, dict):
                     results.append(data)
+            except json.JSONDecodeError:
+                logger.debug(
+                    "SchemaOptimizer: JSON parse error for doc '%s'",
+                    doc.id or "(no id)",
+                )
+                results.append({})
             except Exception:
-                # Extraction failure is expected — we analyze these gaps
+                logger.debug(
+                    "SchemaOptimizer: extraction failed for doc '%s'",
+                    doc.id or "(no id)",
+                    exc_info=True,
+                )
                 results.append({})
 
         return results
 
-    @staticmethod
     def _analyze_gaps(
+        self,
         json_schema: dict[str, Any],
         extracted: list[dict[str, Any]],
     ) -> dict[str, Any]:
@@ -242,7 +255,7 @@ class SchemaOptimizer(BaseModel):
             present = sum(1 for rec in extracted if rec.get(field_name) is not None)
             coverage = present / total if total > 0 else 0
 
-            if coverage < 0.8:
+            if coverage < self.low_coverage_threshold:
                 analysis[field_name] = (
                     f"low coverage ({present}/{total} = {coverage:.0%}) — "
                     f"description may be unclear"

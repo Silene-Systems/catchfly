@@ -35,6 +35,8 @@ Rules:
 def _build_user_prompt(
     documents: list[Document],
     domain_hint: str | None = None,
+    *,
+    max_doc_chars: int = 3000,
 ) -> str:
     parts: list[str] = []
     if domain_hint:
@@ -43,8 +45,8 @@ def _build_user_prompt(
     parts.append(f"Here are {len(documents)} sample documents:\n")
     for i, doc in enumerate(documents):
         # Truncate very long documents in the prompt
-        content = doc.content[:3000]
-        if len(doc.content) > 3000:
+        content = doc.content[:max_doc_chars]
+        if len(doc.content) > max_doc_chars:
             content += "\n... [truncated]"
         parts.append(f"--- Document {i + 1} ---\n{content}\n")
 
@@ -64,6 +66,7 @@ class SinglePassDiscovery(BaseModel):
 
     model: str = "gpt-5.4-mini"
     num_samples: int = 5
+    max_doc_chars: int = 3000
     domain_hint: str | None = None
     temperature: float = 0.7
     base_url: str | None = None
@@ -102,7 +105,7 @@ class SinglePassDiscovery(BaseModel):
 
         messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": _build_user_prompt(sample, hint)},
+            {"role": "user", "content": _build_user_prompt(sample, hint, max_doc_chars=self.max_doc_chars)},
         ]
 
         # Discovery output is itself a dynamic JSON Schema — tool calling

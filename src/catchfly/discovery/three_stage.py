@@ -73,6 +73,7 @@ class ThreeStageDiscovery(BaseModel):
     stage1_samples: int = 3
     stage2_samples: int = 10
     stage3_samples: int = 50
+    max_doc_chars: int = 3000
     human_review: bool = False
     base_url: str | None = None
     api_key: str | None = None
@@ -189,7 +190,7 @@ class ThreeStageDiscovery(BaseModel):
             prompt = (
                 f"Extract data from this document using the schema below.\n\n"
                 f"Schema:\n```json\n{schema_str}\n```\n\n"
-                f"Document:\n---\n{doc.content[:3000]}\n---\n\n"
+                f"Document:\n---\n{doc.content[:self.max_doc_chars]}\n---\n\n"
                 f"Output ONLY the extracted JSON."
             )
             try:
@@ -203,7 +204,18 @@ class ThreeStageDiscovery(BaseModel):
                 )
                 data = json.loads(response.content)
                 results.append(data if isinstance(data, dict) else {})
+            except json.JSONDecodeError:
+                logger.debug(
+                    "ThreeStageDiscovery: JSON parse error for doc '%s'",
+                    doc.id or "(no id)",
+                )
+                results.append({})
             except Exception:
+                logger.debug(
+                    "ThreeStageDiscovery: extraction failed for doc '%s'",
+                    doc.id or "(no id)",
+                    exc_info=True,
+                )
                 results.append({})
 
         return results
@@ -296,6 +308,7 @@ class ThreeStageDiscovery(BaseModel):
             data = json.loads(text)
             return data if isinstance(data, dict) else {}
         except json.JSONDecodeError:
+            logger.warning("ThreeStageDiscovery: could not parse schema changes as JSON")
             return {}
 
     @staticmethod

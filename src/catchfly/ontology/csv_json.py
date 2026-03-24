@@ -26,6 +26,13 @@ class CSVSource:
         entries: list[OntologyEntry] = []
         with open(self.path, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
+            if reader.fieldnames is None:
+                raise ValueError(f"CSV file is empty: {self.path}")
+            missing = {"id", "name"} - set(reader.fieldnames)
+            if missing:
+                raise ValueError(
+                    f"CSV file {self.path} missing required columns: {sorted(missing)}"
+                )
             for row in reader:
                 raw_synonyms = row.get("synonyms", "")
                 synonyms = tuple(
@@ -52,14 +59,30 @@ class JSONSource:
 
     def load(self) -> list[OntologyEntry]:
         data = json.loads(self.path.read_text(encoding="utf-8"))
-        entries = [
-            OntologyEntry(
-                id=item["id"],
-                name=item["name"],
-                synonyms=tuple(item.get("synonyms", [])),
+        if not isinstance(data, list):
+            raise ValueError(
+                f"JSON file {self.path} must contain a list of objects, "
+                f"got {type(data).__name__}"
             )
-            for item in data
-        ]
+        entries: list[OntologyEntry] = []
+        for i, item in enumerate(data):
+            if not isinstance(item, dict):
+                raise ValueError(
+                    f"JSON entry {i} in {self.path} must be an object, "
+                    f"got {type(item).__name__}"
+                )
+            for key in ("id", "name"):
+                if key not in item:
+                    raise ValueError(
+                        f"JSON entry {i} in {self.path} missing required key: '{key}'"
+                    )
+            entries.append(
+                OntologyEntry(
+                    id=item["id"],
+                    name=item["name"],
+                    synonyms=tuple(item.get("synonyms", [])),
+                )
+            )
 
         logger.info("JSONSource: loaded %d entries from %s", len(entries), self.path)
         return entries

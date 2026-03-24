@@ -69,6 +69,7 @@ class KLLMeansClustering(BaseModel):
     summarization_model: str = "gpt-5.4-mini"
     num_iterations: int = 10
     summarize_every: int = 3
+    max_members_in_prompt: int = 50
     base_url: str | None = None
     api_key: str | None = None
 
@@ -278,7 +279,7 @@ class KLLMeansClustering(BaseModel):
                 continue
 
             # Ask LLM for summary
-            member_list = "\n".join(f"- {m}" for m in members[:30])
+            member_list = "\n".join(f"- {m}" for m in members[:self.max_members_in_prompt])
             try:
                 response = await llm_client.acomplete(
                     [
@@ -289,6 +290,12 @@ class KLLMeansClustering(BaseModel):
                 )
                 summaries.append(response.content.strip())
             except Exception:
+                logger.warning(
+                    "KLLMeansClustering: summary failed for cluster %d, "
+                    "falling back to first member",
+                    i,
+                    exc_info=True,
+                )
                 summaries.append(members[0])
 
         # Embed summaries to get new centroids
@@ -317,7 +324,7 @@ class KLLMeansClustering(BaseModel):
                 names.append(members[0])
                 continue
 
-            member_list = "\n".join(f"- {m}" for m in members[:50])
+            member_list = "\n".join(f"- {m}" for m in members[:self.max_members_in_prompt])
             try:
                 response = await llm_client.acomplete(
                     [
@@ -328,7 +335,12 @@ class KLLMeansClustering(BaseModel):
                 )
                 names.append(response.content.strip())
             except Exception:
-                # Fallback: most common member
+                logger.warning(
+                    "KLLMeansClustering: canonical name generation failed for cluster %d, "
+                    "falling back to most frequent member",
+                    i,
+                    exc_info=True,
+                )
                 counter = Counter(members)
                 names.append(counter.most_common(1)[0][0])
 

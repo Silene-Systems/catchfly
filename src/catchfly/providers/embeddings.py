@@ -45,12 +45,14 @@ class OpenAIEmbeddingClient:
         api_key: str | None = None,
         batch_size: int = _DEFAULT_BATCH_SIZE,
         timeout: float = 120.0,
+        max_cache_size: int = 10_000,
     ) -> None:
         self.model = model
         self.base_url = base_url
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         self.batch_size = batch_size
         self.timeout = timeout
+        self.max_cache_size = max_cache_size
         self._cache: dict[str, list[float]] = {}
 
     def _make_async_client(self) -> Any:
@@ -120,9 +122,12 @@ class OpenAIEmbeddingClient:
                         f"Embedding call failed for batch starting at {batch_start}: {e}"
                     ) from e
 
-            # Populate cache and results
+            # Populate cache and results (evict oldest entries if over limit)
             for idx, embedding in zip(uncached_indices, all_embeddings, strict=True):
                 text = texts[idx]
+                if len(self._cache) >= self.max_cache_size:
+                    oldest_key = next(iter(self._cache))
+                    del self._cache[oldest_key]
                 self._cache[text] = embedding
                 results[idx] = embedding
 
