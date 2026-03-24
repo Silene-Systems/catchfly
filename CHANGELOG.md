@@ -4,6 +4,25 @@ All notable changes to catchfly are documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.0.0] — 2026-03-24
+
+### Added
+- **`DictionaryNormalization`** — new zero-cost normalization strategy using static dictionary lookup with exact or case-insensitive matching.
+- **`CompositeNormalization`** — route different fields to different normalization strategies. Pipeline now accepts `normalization={"field": strategy}` dict syntax.
+- **`normalize_fields="all"`** — auto-detect string/array-of-string fields from schema for normalization.
+- **`on_schema_ready` callback** — optional callback in `Pipeline.arun()`/`run()` invoked after discovery, before extraction, allowing schema inspection or modification.
+- **Document glob loader** — `Pipeline.arun()`/`run()` now accepts `list[str]` glob patterns (e.g. `["data/*.txt"]`) that auto-resolve to Documents. New `catchfly.loaders` module with `load_glob()` and `resolve_documents()`.
+- **`verbose` parameter** — `Pipeline.__init__()` and `Pipeline.quick()` accept `verbose=True` for tqdm progress bars during normalization.
+- **`UsageReport.cost_usd`** — property alias for `total_cost_usd` (PRD compatibility).
+
+### Fixed
+- **UsageTracker now connected to strategies** (critical bug) — `usage_callback` injection into `OpenAICompatibleClient`, wired through all 7 strategies via Pipeline. `max_cost_usd` budget enforcement and `result.report` cost tracking now work correctly.
+- **`RecordProvenance.confidence` populated** — retry-based heuristic (`1.0` on first attempt, decreasing by `0.3` per retry). Was previously always `None`.
+
+### Changed
+- Version bumped to 1.0.0. Development status upgraded to Beta.
+- All PRD §13 success criteria met. 269 tests, ruff clean.
+
 ## [0.8.1] — 2026-03-24
 
 ### Fixed
