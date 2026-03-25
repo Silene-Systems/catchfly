@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from catchfly.discovery.base import DiscoveryStrategy
     from catchfly.extraction.base import ExtractionStrategy
     from catchfly.normalization.base import NormalizationStrategy
+    from catchfly.selection.base import FieldSelector
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class Pipeline:
         discovery: DiscoveryStrategy | None = None,
         extraction: ExtractionStrategy | None = None,
         normalization: NormalizationStrategy | dict[str, NormalizationStrategy] | None = None,
+        field_selector: FieldSelector | None = None,
         *,
         verbose: bool = False,
     ) -> None:
@@ -52,10 +54,14 @@ class Pipeline:
             normalization: Value normalization strategy, or a dict mapping
                 field names to strategies (auto-wrapped in CompositeNormalization),
                 or None to skip.
+            field_selector: Strategy for auto-selecting which fields to normalize.
+                When set, ``normalize_fields`` in ``run()`` can be omitted — the
+                selector decides. Explicit ``normalize_fields`` overrides the selector.
             verbose: Show tqdm progress bars during extraction/normalization.
         """
         self.discovery = discovery
         self.extraction = extraction
+        self.field_selector = field_selector
         self.verbose = verbose
         if isinstance(normalization, dict):
             from catchfly.normalization.composite import CompositeNormalization
@@ -76,7 +82,10 @@ class Pipeline:
     ) -> Pipeline:
         """Create a pipeline with sensible defaults.
 
-        Uses SinglePassDiscovery + LLMDirectExtraction + LLMCanonicalization.
+        Uses SinglePassDiscovery + LLMDirectExtraction + LLMFieldSelector
+        + LLMCanonicalization.  The field selector automatically identifies
+        which discovered fields are categorical and worth normalizing — no
+        ``normalize_fields`` parameter needed in ``run()``.
 
         Args:
             model: LLM model name to use across all stages.
@@ -89,6 +98,7 @@ class Pipeline:
         from catchfly.discovery.single_pass import SinglePassDiscovery
         from catchfly.extraction.llm_direct import LLMDirectExtraction
         from catchfly.normalization.llm_canonical import LLMCanonicalization
+        from catchfly.selection.llm import LLMFieldSelector
 
         return cls(
             discovery=SinglePassDiscovery(
@@ -103,6 +113,11 @@ class Pipeline:
                 on_error=on_error,
             ),
             normalization=LLMCanonicalization(
+                model=model,
+                base_url=base_url,
+                api_key=api_key,
+            ),
+            field_selector=LLMFieldSelector(
                 model=model,
                 base_url=base_url,
                 api_key=api_key,
@@ -236,7 +251,7 @@ class Pipeline:
                     "(discovery failed or not configured)"
                 )
 
-            # --- Resolve normalize_fields="all" ---
+            # --- Resolve normalize_fields ---
             if normalize_fields == "all" and result.schema is not None:
                 props = result.schema.json_schema.get("properties", {})
                 normalize_fields = [
@@ -250,6 +265,25 @@ class Pipeline:
                 ]
                 logger.info(
                     "Pipeline: normalize_fields='all' resolved to %s",
+                    normalize_fields,
+                )
+            elif (
+                normalize_fields is None
+                and self.field_selector is not None
+                and self.normalization is not None
+                and result.schema is not None
+                and result.records
+            ):
+                # --- Field Selection (auto) ---
+                logger.info("Pipeline: running field selector to choose normalization targets")
+                if self.field_selector is not None:
+                    setattr(self.field_selector, "_usage_callback", tracker.make_callback("field_selection"))  # noqa: B010
+                normalize_fields = await self.field_selector.aselect(
+                    result.schema, result.records
+                )
+                logger.info(
+                    "Pipeline: field selector chose %d fields: %s",
+                    len(normalize_fields),
                     normalize_fields,
                 )
 
