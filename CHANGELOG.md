@@ -4,6 +4,21 @@ All notable changes to catchfly are documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased] — v1.1
+
+### Added
+- **Pluggable chunking strategies** — `ChunkingStrategy` protocol with `FixedSizeChunking` (built-in) and chonkie-backed `TokenChunking`, `SentenceChunking`, `RecursiveChunking`, `SemanticChunking`. Install via `pip install catchfly[chunking]`.
+- **`CascadeNormalization`** — chain normalization strategies sequentially (Dictionary → LLM → Ontology). Each step receives only unmapped values from previous steps. `CascadeNormalization.default()` factory for recommended cascade.
+- **Field Selection** — `FieldSelector` protocol with `LLMFieldSelector` (LLM-based, ~$0.001) and `StatisticalFieldSelector` (zero-cost heuristics). `Pipeline.quick()` now includes `LLMFieldSelector` by default — auto-normalizes without `normalize_fields`.
+- **Cookbook** — 5 Jupyter notebooks: Quick Start, Rare Disease, Product Catalog, Custom Schema, Local Models.
+- `chunking` and `semantic-chunking` optional dependencies in `pyproject.toml`.
+- `LLMDirectExtraction.chunking_strategy` parameter for pluggable chunking.
+- `Pipeline.__init__()` accepts `field_selector` parameter.
+
+### Changed
+- `Pipeline.quick()` now uses `LLMFieldSelector` by default — zero-config normalization for discovery workflows.
+- Documentation updated: new Field Selection guide, chunking strategies in extraction guide, CascadeNormalization/DictionaryNormalization/CompositeNormalization in normalization guide, updated pipeline guide with callbacks/globs/verbose.
+
 ## [1.0.0] — 2026-03-24
 
 ### Added

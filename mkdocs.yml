@@ -37,6 +37,7 @@ nav:
   - Guides:
       - Schema Discovery: guides/discovery.md
       - Data Extraction: guides/extraction.md
+      - Field Selection: guides/field-selection.md
       - Normalization: guides/normalization.md
       - Pipeline: guides/pipeline.md
   - Cookbook: cookbook/index.md
@@ -44,6 +45,7 @@ nav:
       - Pipeline: api/pipeline.md
       - Discovery: api/discovery.md
       - Extraction: api/extraction.md
+      - Field Selection: api/selection.md
       - Normalization: api/normalization.md
       - Ontology: api/ontology.md
       - Types: api/types.md

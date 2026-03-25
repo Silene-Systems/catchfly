@@ -1,6 +1,67 @@
 # Normalization
 
-Catchfly offers four normalization strategies for cleaning up messy extracted values.
+Catchfly offers multiple normalization strategies for cleaning up messy extracted values — from zero-cost dictionary lookup to ontology-grounded mapping.
+
+## CascadeNormalization
+
+Chain multiple strategies sequentially. Each step receives only the values unmapped by previous steps. Recommended for production.
+
+```python
+from catchfly.normalization import CascadeNormalization
+
+# Default cascade: Dictionary → LLM → Ontology
+cascade = CascadeNormalization.default(
+    dictionary={"ALT": "Alanine aminotransferase", "AST": "Aspartate aminotransferase"},
+    model="gpt-5.4-mini",
+    ontology="hpo",
+)
+
+result = cascade.normalize(values=extracted_values, context_field="phenotype")
+```
+
+### Custom cascade
+
+```python
+from catchfly.normalization import (
+    CascadeNormalization,
+    DictionaryNormalization,
+    LLMCanonicalization,
+    OntologyMapping,
+)
+
+cascade = CascadeNormalization(steps=[
+    DictionaryNormalization(mapping=known_terms, case_insensitive=True),
+    LLMCanonicalization(model="gpt-5.4-mini"),
+    OntologyMapping(ontology="path/to/ontology.obo"),
+])
+
+result = cascade.normalize(values=messy_values, context_field="diagnosis")
+# result.metadata has per-step stats (strategy name, mapped count, remaining count)
+```
+
+**Best for:** Production pipelines that need maximum coverage at controlled cost.
+
+---
+
+## DictionaryNormalization
+
+Zero-cost normalization using a static dictionary. Exact or case-insensitive matching.
+
+```python
+from catchfly.normalization import DictionaryNormalization
+
+normalizer = DictionaryNormalization(
+    mapping={"NYC": "New York", "LA": "Los Angeles", "SF": "San Francisco"},
+    case_insensitive=True,
+)
+
+result = normalizer.normalize(values=["nyc", "NYC", "Chicago"], context_field="city")
+# {"nyc": "New York", "NYC": "New York", "Chicago": "Chicago"}
+```
+
+**Best for:** Known abbreviations, acronyms, domain-specific mappings. First step in a cascade.
+
+---
 
 ## OntologyMapping
 
@@ -122,6 +183,44 @@ The pipeline passes `field_metadata` automatically when both `SchemaOptimizer` a
 
 ---
 
+## CompositeNormalization
+
+Route different fields to different normalization strategies:
+
+```python
+from catchfly import Pipeline
+from catchfly.normalization import (
+    CompositeNormalization,
+    LLMCanonicalization,
+    OntologyMapping,
+    DictionaryNormalization,
+)
+
+# Option 1: Via Pipeline dict syntax
+pipeline = Pipeline(
+    discovery=...,
+    extraction=...,
+    normalization={
+        "phenotype": OntologyMapping(ontology="hpo"),
+        "medication": DictionaryNormalization(mapping=drug_dict),
+        "category": LLMCanonicalization(model="gpt-5.4-mini"),
+    },
+)
+
+# Option 2: Explicit CompositeNormalization with default fallback
+composite = CompositeNormalization(
+    field_strategies={
+        "phenotype": OntologyMapping(ontology="hpo"),
+        "gene": DictionaryNormalization(mapping=gene_dict),
+    },
+    default=LLMCanonicalization(model="gpt-5.4-mini"),
+)
+```
+
+**Best for:** Multi-domain extraction where different fields need different normalization approaches.
+
+---
+
 ## EmbeddingClustering
 
 Embed values → cluster → pick canonical name per cluster. No LLM needed during clustering.
@@ -173,12 +272,12 @@ result = normalizer.normalize(values=messy_values, context_field="medication")
 
 ## Choosing a Strategy
 
-| Criterion | OntologyMapping | LLMCanonicalization | EmbeddingClustering | KLLMeansClustering |
-|---|---|---|---|---|
-| **Use case** | Map to ontology | Group synonyms | Cluster variants | Cluster with LLM centroids |
-| **LLM cost** | Medium (reranking) | Medium | Low (embedding only) | Medium-High |
-| **Quality** | High (ontology-grounded) | High | Good | Good |
-| **Ontology IDs** | Yes | No | No | No |
-| **Schema context** | No | Yes | No | No |
-| **Scale** | Any | Small-medium (<1k) | Any | Any |
-| **Best domain** | Biomedical | General | General | Surface-form |
+| Criterion | CascadeNormalization | OntologyMapping | LLMCanonicalization | DictionaryNormalization | EmbeddingClustering | KLLMeansClustering |
+|---|---|---|---|---|---|---|
+| **Use case** | Production pipeline | Map to ontology | Group synonyms | Known mappings | Cluster variants | Surface-form dedup |
+| **LLM cost** | Varies | Medium (reranking) | Medium | Zero | Low (embedding) | Medium-High |
+| **Quality** | Highest | High (ontology-grounded) | High | Exact only | Good | Good |
+| **Ontology IDs** | If ontology step | Yes | No | No | No | No |
+| **Schema context** | If LLM step | No | Yes | No | No | No |
+| **Scale** | Any | Any | Small-medium (<1k) | Any | Any | Any |
+| **Best domain** | General | Biomedical | General | Any | General | Surface-form |

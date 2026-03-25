@@ -1,5 +1,17 @@
 # Normalization API
 
+## CascadeNormalization
+
+::: catchfly.normalization.cascade.CascadeNormalization
+
+## DictionaryNormalization
+
+::: catchfly.normalization.dictionary.DictionaryNormalization
+
+## CompositeNormalization
+
+::: catchfly.normalization.composite.CompositeNormalization
+
 ## OntologyMapping
 
 ::: catchfly.normalization.ontology_mapping.OntologyMapping

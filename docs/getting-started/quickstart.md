@@ -20,11 +20,10 @@ docs = load_samples("product_reviews")
 # Create pipeline with sensible defaults
 pipeline = Pipeline.quick(model="gpt-5.4-mini")
 
-# Discover schema → extract → normalize
+# Discover schema → extract → auto-select fields → normalize
 results = pipeline.run(
     documents=docs,
     domain_hint="Electronics product reviews",
-    normalize_fields=["pros"],
 )
 
 # Explore results
@@ -33,7 +32,7 @@ print(results.to_dataframe())        # Extracted data as DataFrame
 print(results.report)                # Cost & usage stats
 ```
 
-`Pipeline.quick()` uses **SinglePassDiscovery + LLMDirectExtraction + LLMCanonicalization** — the recommended default with schema-aware normalization.
+`Pipeline.quick()` uses **SinglePassDiscovery + LLMDirectExtraction + LLMFieldSelector + LLMCanonicalization** — the recommended zero-config default. The field selector automatically identifies categorical fields worth normalizing.
 
 ## 3. Available Demo Datasets
 
@@ -57,6 +56,15 @@ pipeline = Pipeline.quick(model="gpt-5.4-mini")
 results = pipeline.run(docs, domain_hint="Your domain description")
 ```
 
+You can also pass glob patterns:
+
+```python
+results = pipeline.run(
+    documents=["data/*.txt", "reports/**/*.md"],
+    domain_hint="Your domain description",
+)
+```
+
 ## 5. Bring Your Own Schema
 
 Skip discovery and use a Pydantic model you define:
@@ -73,8 +81,22 @@ class Invoice(BaseModel):
 results = pipeline.run(docs, schema=Invoice)
 ```
 
+## 6. Override Field Selection
+
+By default `Pipeline.quick()` auto-selects fields to normalize. You can override this:
+
+```python
+# Explicit fields — bypasses auto-selection
+results = pipeline.run(docs, normalize_fields=["category", "brand"])
+
+# Normalize all string fields
+results = pipeline.run(docs, normalize_fields="all")
+```
+
 ## Next Steps
 
 - [Schema Discovery Guide](../guides/discovery.md) — SinglePass, ThreeStage, Optimizer
-- [Normalization Guide](../guides/normalization.md) — OntologyMapping, LLMCanonicalization, Embedding, kLLMmeans
-- [Pipeline Guide](../guides/pipeline.md) — Cost control, checkpoint, error handling
+- [Data Extraction Guide](../guides/extraction.md) — Chunking strategies, error handling
+- [Field Selection Guide](../guides/field-selection.md) — Auto-detect normalizable fields
+- [Normalization Guide](../guides/normalization.md) — Cascade, OntologyMapping, LLMCanonicalization
+- [Pipeline Guide](../guides/pipeline.md) — Cost control, checkpoint, callbacks
