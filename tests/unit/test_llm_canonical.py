@@ -219,17 +219,10 @@ class TestBuildSystemPrompt:
     """Tests for _build_system_prompt and schema-aware prompting."""
 
     def test_without_metadata_returns_base_prompt(self) -> None:
-        prompt = _build_system_prompt("city")
-        assert "field \"city\"" in prompt
-        assert "Schema context" not in prompt
-
-    def test_with_none_metadata(self) -> None:
-        prompt = _build_system_prompt("city", None)
-        assert "Schema context" not in prompt
-
-    def test_with_empty_metadata(self) -> None:
-        prompt = _build_system_prompt("city", {})
-        assert "Schema context" not in prompt
+        for arg in (None, {}):
+            prompt = _build_system_prompt("city", arg)
+            assert "field \"city\"" in prompt
+            assert "Schema context" not in prompt
 
     def test_with_full_metadata(self) -> None:
         metadata = {

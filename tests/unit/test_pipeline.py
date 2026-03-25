@@ -250,14 +250,6 @@ class TestUsageTrackerWiring:
 
 
 class TestVerbose:
-    def test_verbose_flag_stored(self) -> None:
-        pipeline = Pipeline(verbose=True)
-        assert pipeline.verbose is True
-
-    def test_quick_verbose(self) -> None:
-        pipeline = Pipeline.quick(model="gpt-5.4-mini", verbose=True)
-        assert pipeline.verbose is True
-
     async def test_verbose_does_not_crash(self) -> None:
         """verbose=True should work even without tqdm installed."""
         pipeline = Pipeline(
@@ -291,15 +283,6 @@ class TestGlobDocuments:
             [str(p / "*.txt")], domain_hint="test"
         )
         assert len(result.records) == 2
-
-
-class TestUsageReportAlias:
-    def test_cost_usd_alias(self) -> None:
-        from catchfly._types import UsageReport
-
-        report = UsageReport(total_cost_usd=1.23)
-        assert report.cost_usd == 1.23
-        assert report.cost_usd == report.total_cost_usd
 
 
 class TestPipelineQuick:

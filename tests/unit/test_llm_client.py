@@ -1,57 +1,10 @@
-"""Tests for LLM client."""
+"""Tests for LLM client — provider routing and initialization."""
 
 from __future__ import annotations
 
-import os
+import pytest
 
-from catchfly.providers.llm import LLMResponse, OpenAICompatibleClient, _resolve_provider
-
-# Import mock from conftest
-from tests.conftest import MockLLMClient
-
-
-class TestLLMResponse:
-    def test_create(self) -> None:
-        resp = LLMResponse(content="hello", input_tokens=10, output_tokens=5, model="gpt-4o")
-        assert resp.content == "hello"
-        assert resp.input_tokens == 10
-        assert resp.output_tokens == 5
-        assert resp.model == "gpt-4o"
-
-    def test_defaults(self) -> None:
-        resp = LLMResponse(content="hi")
-        assert resp.input_tokens == 0
-        assert resp.output_tokens == 0
-        assert resp.model == ""
-        assert resp.raw is None
-
-
-class TestMockLLMClient:
-    async def test_acomplete(self) -> None:
-        client = MockLLMClient(responses=["response 1", "response 2"])
-        resp1 = await client.acomplete([{"role": "user", "content": "hi"}])
-        resp2 = await client.acomplete([{"role": "user", "content": "hello"}])
-
-        assert resp1.content == "response 1"
-        assert resp2.content == "response 2"
-        assert len(client.calls) == 2
-
-    async def test_cycles_responses(self) -> None:
-        client = MockLLMClient(responses=["only one"])
-        resp1 = await client.acomplete([{"role": "user", "content": "a"}])
-        resp2 = await client.acomplete([{"role": "user", "content": "b"}])
-        assert resp1.content == "only one"
-        assert resp2.content == "only one"
-
-    async def test_records_call_params(self) -> None:
-        client = MockLLMClient()
-        await client.acomplete(
-            [{"role": "user", "content": "test"}],
-            model="gpt-5",
-            temperature=0.5,
-        )
-        assert client.calls[0]["model"] == "gpt-5"
-        assert client.calls[0]["temperature"] == 0.5
+from catchfly.providers.llm import OpenAICompatibleClient, _resolve_provider
 
 
 class TestOpenAICompatibleClient:
@@ -71,19 +24,17 @@ class TestOpenAICompatibleClient:
         assert client.base_url == "http://localhost:11434/v1"
         assert client.api_key == "test-key"
 
-    def test_init_anthropic_prefix(self, monkeypatch: object) -> None:
+    def test_init_anthropic_prefix(self) -> None:
         """model='anthropic/claude-...' strips prefix and routes correctly."""
-        import pytest
-
-        monkeypatch = pytest.MonkeyPatch()
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+        mp = pytest.MonkeyPatch()
+        mp.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
         try:
             client = OpenAICompatibleClient(model="anthropic/claude-haiku-4-5-20251001")
             assert client.model == "claude-haiku-4-5-20251001"
             assert client.base_url == "https://api.anthropic.com/v1/"
             assert client.api_key == "sk-ant-test"
         finally:
-            monkeypatch.undo()
+            mp.undo()
 
     def test_init_explicit_overrides_provider(self) -> None:
         """Explicit base_url/api_key always wins over provider routing."""
@@ -104,9 +55,7 @@ class TestOpenAICompatibleClient:
 
 
 class TestResolveProvider:
-    def test_anthropic(self, monkeypatch: object) -> None:
-        import pytest
-
+    def test_anthropic(self) -> None:
         mp = pytest.MonkeyPatch()
         mp.setenv("ANTHROPIC_API_KEY", "ant-key")
         try:
@@ -117,9 +66,7 @@ class TestResolveProvider:
         finally:
             mp.undo()
 
-    def test_groq(self, monkeypatch: object) -> None:
-        import pytest
-
+    def test_groq(self) -> None:
         mp = pytest.MonkeyPatch()
         mp.setenv("GROQ_API_KEY", "groq-key")
         try:

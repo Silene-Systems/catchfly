@@ -9,22 +9,13 @@ from catchfly.demo import load_samples
 
 
 class TestLoadSamples:
-    def test_load_product_reviews(self) -> None:
-        docs = load_samples("product_reviews")
+    @pytest.mark.parametrize("name", ["product_reviews", "support_tickets", "case_reports"])
+    def test_load_dataset(self, name: str) -> None:
+        docs = load_samples(name)
         assert len(docs) == 10
         assert all(isinstance(d, Document) for d in docs)
         assert all(d.content for d in docs)
-        assert all(d.source == "demo:product_reviews" for d in docs)
-
-    def test_load_support_tickets(self) -> None:
-        docs = load_samples("support_tickets")
-        assert len(docs) == 10
-        assert all(isinstance(d, Document) for d in docs)
-
-    def test_load_case_reports(self) -> None:
-        docs = load_samples("case_reports")
-        assert len(docs) == 10
-        assert all(isinstance(d, Document) for d in docs)
+        assert all(d.source == f"demo:{name}" for d in docs)
 
     def test_default_is_product_reviews(self) -> None:
         docs = load_samples()

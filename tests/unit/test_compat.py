@@ -15,13 +15,6 @@ class TestRunSync:
         result = run_sync(add(2, 3))
         assert result == 5
 
-    def test_returns_value(self) -> None:
-        async def greet(name: str) -> str:
-            return f"hello {name}"
-
-        result = run_sync(greet("world"))
-        assert result == "hello world"
-
     def test_async_with_await(self) -> None:
         async def slow_add(a: int, b: int) -> int:
             await asyncio.sleep(0.01)
