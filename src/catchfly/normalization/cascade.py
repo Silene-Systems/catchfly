@@ -30,7 +30,7 @@ class CascadeNormalization(BaseModel):
         ])
     """
 
-    steps: list[Any]
+    steps: list[Any]  # list[NormalizationStrategy] — Any for Pydantic duck-typing compat
     _usage_callback: Any = PrivateAttr(default=None)
 
     model_config = {"arbitrary_types_allowed": True}

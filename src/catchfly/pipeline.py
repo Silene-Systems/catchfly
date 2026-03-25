@@ -322,9 +322,20 @@ class Pipeline:
         else:
             n_chunks = estimate_chunks(documents)
 
-        discovery_cost = avg_tokens * 6 / 1_000_000 * 0.15
-        extraction_cost = n_chunks * avg_tokens * 2 / 1_000_000 * 0.15
-        normalization_cost = n_docs * 0.001
+        # Multipliers assume gpt-5.4-mini pricing ($0.15/1M input tokens).
+        # Discovery sends ~6x avg_tokens (samples + schema prompt overhead).
+        # Extraction sends ~2x avg_tokens per chunk (schema + doc content).
+        # Normalization is ~$0.001 per document (one short LLM call each).
+        _price_per_1m = 0.15
+        _discovery_token_multiplier = 6
+        _extraction_token_multiplier = 2
+        _norm_cost_per_doc = 0.001
+
+        discovery_cost = avg_tokens * _discovery_token_multiplier / 1_000_000 * _price_per_1m
+        extraction_cost = (
+            n_chunks * avg_tokens * _extraction_token_multiplier / 1_000_000 * _price_per_1m
+        )
+        normalization_cost = n_docs * _norm_cost_per_doc
 
         return {
             "discovery": round(discovery_cost, 4),
@@ -454,14 +465,18 @@ class _Checkpoint:
 
         try:
             data = json.loads(self._schema_path.read_text(encoding="utf-8"))
-            import contextlib
-
             from catchfly.schema.converters import json_schema_to_pydantic
 
             json_schema = data["json_schema"]
             model = None
-            with contextlib.suppress(Exception):
+            try:
                 model = json_schema_to_pydantic(json_schema, "CheckpointSchema")
+            except (ValueError, TypeError, KeyError) as e:
+                logger.debug(
+                    "Checkpoint: could not reconstruct Pydantic model, "
+                    "falling back to JSON Schema only: %s",
+                    e,
+                )
 
             return Schema(
                 model=model,
@@ -469,8 +484,8 @@ class _Checkpoint:
                 field_metadata=data.get("field_metadata", {}),
                 lineage=data.get("lineage", []),
             )
-        except Exception:
-            logger.warning("Checkpoint: failed to load schema", exc_info=True)
+        except (json.JSONDecodeError, OSError, KeyError) as e:
+            logger.warning("Checkpoint: failed to load schema: %s", e, exc_info=True)
             return None
 
     def append_record(self, record: Any) -> None:
@@ -511,5 +526,6 @@ class _Checkpoint:
         try:
             data = json.loads(self._state_path.read_text(encoding="utf-8"))
             return set(data) if isinstance(data, list) else set()
-        except Exception:
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Checkpoint: failed to load processed IDs: %s", e)
             return set()

@@ -29,7 +29,7 @@ from catchfly.exceptions import (
 )
 from catchfly.pipeline import Pipeline
 
-__version__ = "1.0.0"
+__version__ = "1.0.2"
 
 __all__ = [
     "BudgetExceededError",

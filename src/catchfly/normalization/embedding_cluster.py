@@ -6,7 +6,7 @@ import logging
 from collections import Counter
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 from catchfly._compat import run_sync
 from catchfly._types import NormalizationResult
@@ -85,6 +85,8 @@ class EmbeddingClustering(BaseModel):
     """32 dims preserves local structure while speeding up clustering (OpenAI embeds are 1536d)."""
     base_url: str | None = None
     api_key: str | None = None
+
+    _usage_callback: Any = PrivateAttr(default=None)
 
     model_config = {"arbitrary_types_allowed": True}
 

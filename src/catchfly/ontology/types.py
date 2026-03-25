@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +26,7 @@ class OntologyEntry:
         return [self.name, *self.synonyms]
 
 
+@runtime_checkable
 class OntologySource(Protocol):
     """Protocol for ontology loaders."""
 
