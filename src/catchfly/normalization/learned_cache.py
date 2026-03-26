@@ -168,4 +168,4 @@ class LearnedDictionaryCache(BaseModel):
             logger.info("LearnedDictionaryCache: version mismatch, ignoring cache")
             return {}
 
-        return data
+        return dict(data)

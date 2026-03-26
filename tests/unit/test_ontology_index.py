@@ -146,7 +146,6 @@ class TestOntologyIndex:
 
         class BareEmbedder:
             async def aembed(self, texts: list[str]) -> list[list[float]]:
-                h = 42
                 return [
                     [((hash(t) + i) & 0xF) / 15.0 for i in range(8)] for t in texts
                 ]

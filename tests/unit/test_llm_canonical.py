@@ -281,9 +281,21 @@ class TestApplyHierarchicalMerge:
 
     def test_merges_two_groups(self) -> None:
         original = [
-            {"canonical": "Wedding Rings", "members": ["wedding band", "bridal ring"], "rationale": "rings"},
-            {"canonical": "Rings & Bands", "members": ["ring", "band"], "rationale": "bands"},
-            {"canonical": "Earrings", "members": ["earring", "stud"], "rationale": "ear jewelry"},
+            {
+                "canonical": "Wedding Rings",
+                "members": ["wedding band", "bridal ring"],
+                "rationale": "rings",
+            },
+            {
+                "canonical": "Rings & Bands",
+                "members": ["ring", "band"],
+                "rationale": "bands",
+            },
+            {
+                "canonical": "Earrings",
+                "members": ["earring", "stud"],
+                "rationale": "ear jewelry",
+            },
         ]
         instructions = [
             {
@@ -354,7 +366,11 @@ class TestHierarchicalMerge:
         """Map-reduce with hierarchical merge consolidates semantically similar groups."""
         # Batch responses: each batch produces its own groups
         batch_response = [
-            {"canonical": "Wedding Rings", "members": ["wedding band", "bridal ring"], "rationale": "rings"},
+            {
+                "canonical": "Wedding Rings",
+                "members": ["wedding band", "bridal ring"],
+                "rationale": "rings",
+            },
         ]
         # Hierarchical merge response: merges the duplicate canonicals
         merge_response = [
@@ -371,7 +387,13 @@ class TestHierarchicalMerge:
         ]
         # First 4 calls are map batches, 5th call is hierarchical merge
         mock_llm = MockCanonicalizationLLM(
-            responses=[batch_response, batch_response, batch_response, batch_response, merge_response]
+            responses=[
+                batch_response,
+                batch_response,
+                batch_response,
+                batch_response,
+                merge_response,
+            ]
         )
         normalizer = LLMCanonicalization(
             model="mock", max_values_per_prompt=3, batch_size=2, hierarchical_merge=True,
@@ -379,7 +401,7 @@ class TestHierarchicalMerge:
         )
 
         values = [f"val_{i}" for i in range(8)]
-        result = await normalizer.anormalize(values, context_field="product_type")
+        await normalizer.anormalize(values, context_field="product_type")
 
         # Hierarchical merge should have been called (more than just batch calls)
         assert mock_llm.call_count > 4

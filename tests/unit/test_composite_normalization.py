@@ -69,7 +69,6 @@ class TestCompositeNormalization:
         """Pipeline wraps dict normalization into CompositeNormalization."""
         from catchfly._types import Document
         from catchfly.pipeline import Pipeline
-
         from tests.unit.test_pipeline import (
             MockDiscovery,
             MockExtraction,

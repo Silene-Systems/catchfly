@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -64,7 +63,8 @@ class TestSentenceTransformerEmbeddingClient:
 
     def test_load_model_on_first_embed(self) -> None:
         mock_class = _make_mock_st_class()
-        with patch.dict("sys.modules", {"sentence_transformers": MagicMock(SentenceTransformer=mock_class)}):
+        mock_module = MagicMock(SentenceTransformer=mock_class)
+        with patch.dict("sys.modules", {"sentence_transformers": mock_module}):
             client = SentenceTransformerEmbeddingClient(device="cpu")
             client._load_model()
             assert client._model_instance is not None
@@ -74,9 +74,11 @@ class TestSentenceTransformerEmbeddingClient:
         """Helpful error when sentence-transformers is not installed."""
         client = SentenceTransformerEmbeddingClient()
         client._model_instance = None
-        with patch.dict("sys.modules", {"sentence_transformers": None}):
-            with pytest.raises(ImportError, match="sentence-transformers"):
-                client._load_model()
+        with (
+            patch.dict("sys.modules", {"sentence_transformers": None}),
+            pytest.raises(ImportError, match="sentence-transformers"),
+        ):
+            client._load_model()
 
     def test_device_detection_cuda(self) -> None:
         mock_torch = MagicMock()

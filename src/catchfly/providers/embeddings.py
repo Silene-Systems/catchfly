@@ -187,7 +187,7 @@ class SentenceTransformerEmbeddingClient:
             return self._model_instance
 
         try:
-            from sentence_transformers import SentenceTransformer
+            from sentence_transformers import SentenceTransformer  # type: ignore[import-not-found]
         except ImportError as e:
             raise ImportError(
                 "sentence-transformers is required for "
@@ -208,7 +208,7 @@ class SentenceTransformerEmbeddingClient:
     def _detect_device() -> str:
         """Auto-detect best available device: CUDA > MPS > CPU."""
         try:
-            import torch
+            import torch  # type: ignore[import-not-found]
 
             if torch.cuda.is_available():
                 return "cuda"
@@ -227,7 +227,8 @@ class SentenceTransformerEmbeddingClient:
             show_progress_bar=False,
             convert_to_numpy=True,
         )
-        return embeddings.tolist()
+        result: list[list[float]] = embeddings.tolist()
+        return result
 
     async def aembed(self, texts: list[str]) -> list[list[float]]:
         """Embed texts asynchronously.
