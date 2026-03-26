@@ -215,7 +215,7 @@ class ThreeStageDiscovery(BaseModel):
             prompt = (
                 f"Extract data from this document using the schema below.\n\n"
                 f"Schema:\n```json\n{schema_str}\n```\n\n"
-                f"Document:\n---\n{doc.content[:self.max_doc_chars]}\n---\n\n"
+                f"Document:\n---\n{doc.content[: self.max_doc_chars]}\n---\n\n"
                 f"Output ONLY the extracted JSON."
             )
             try:

@@ -220,12 +220,12 @@ class SchemaOptimizer(BaseModel):
         schema_str = json.dumps(json_schema, indent=2)
         results: list[dict[str, Any]] = []
 
-        for doc in documents[:self.max_docs_per_iteration]:
+        for doc in documents[: self.max_docs_per_iteration]:
             prompt = (
                 f"Extract structured data from this document according to "
                 f"the JSON Schema below.\n\n"
                 f"Schema:\n```json\n{schema_str}\n```\n\n"
-                f"Document:\n---\n{doc.content[:self.max_doc_chars]}\n---\n\n"
+                f"Document:\n---\n{doc.content[: self.max_doc_chars]}\n---\n\n"
                 f"Output ONLY the extracted JSON."
             )
 

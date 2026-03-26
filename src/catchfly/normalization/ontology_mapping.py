@@ -190,16 +190,12 @@ class OntologyMapping(BaseModel):
             )
         else:
             matches = [
-                _OntologyMatch(entry=cands[0][0], confidence=cands[0][1])
-                if cands
-                else None
+                _OntologyMatch(entry=cands[0][0], confidence=cands[0][1]) if cands else None
                 for cands in nn_results
             ]
 
         # 6. Build result
-        return self._build_result(
-            unique_values, matches, nn_results, context_field
-        )
+        return self._build_result(unique_values, matches, nn_results, context_field)
 
     def normalize(
         self,
@@ -208,9 +204,7 @@ class OntologyMapping(BaseModel):
         **kwargs: Any,
     ) -> NormalizationResult:
         """Normalize values synchronously."""
-        return run_sync(
-            self.anormalize(values, context_field=context_field, **kwargs)
-        )
+        return run_sync(self.anormalize(values, context_field=context_field, **kwargs))
 
     # ------------------------------------------------------------------
     # Source resolution
@@ -232,8 +226,7 @@ class OntologyMapping(BaseModel):
             return JSONSource(path)
 
         raise NormalizationError(
-            f"Cannot resolve ontology '{ont}'. "
-            "Use 'hpo', or a path to .obo, .csv, or .json file."
+            f"Cannot resolve ontology '{ont}'. Use 'hpo', or a path to .obo, .csv, or .json file."
         )
 
     def _resolve_cache_path(self) -> Path | None:
@@ -283,9 +276,7 @@ class OntologyMapping(BaseModel):
         try:
             from tqdm.asyncio import tqdm_asyncio  # type: ignore[import-untyped]
 
-            for coro in tqdm_asyncio.as_completed(
-                tasks, desc="HPO reranking", total=len(tasks)
-            ):
+            for coro in tqdm_asyncio.as_completed(tasks, desc="HPO reranking", total=len(tasks)):
                 idx, match = await coro
                 results[idx] = match
         except ImportError:
@@ -313,15 +304,12 @@ class OntologyMapping(BaseModel):
         for i, (entry, score) in enumerate(candidates, 1):
             syns = ", ".join(entry.synonyms[:5]) if entry.synonyms else "none"
             lines.append(
-                f"{i}. {entry.name} ({entry.id}) — score: {score:.3f}"
-                f"\n   Synonyms: {syns}"
+                f"{i}. {entry.name} ({entry.id}) — score: {score:.3f}\n   Synonyms: {syns}"
             )
             entry_lookup[entry.id] = entry
 
         user_prompt = (
-            f'Field: "{context_field}"\n'
-            f'Input term: "{value}"\n\n'
-            f"Candidates:\n" + "\n".join(lines)
+            f'Field: "{context_field}"\nInput term: "{value}"\n\nCandidates:\n' + "\n".join(lines)
         )
 
         async with sem:
@@ -333,9 +321,7 @@ class OntologyMapping(BaseModel):
                     ],
                     temperature=0.0,
                 )
-                return self._parse_rerank_response(
-                    response.content, entry_lookup, candidates
-                )
+                return self._parse_rerank_response(response.content, entry_lookup, candidates)
             except (ProviderError, json.JSONDecodeError, ValueError, KeyError) as e:
                 logger.warning(
                     "OntologyMapping: reranking failed for '%s', using NN top-1: %s",
@@ -343,9 +329,7 @@ class OntologyMapping(BaseModel):
                     e,
                     exc_info=True,
                 )
-                return _OntologyMatch(
-                    entry=candidates[0][0], confidence=candidates[0][1]
-                )
+                return _OntologyMatch(entry=candidates[0][0], confidence=candidates[0][1])
 
     @staticmethod
     def _parse_rerank_response(
@@ -361,9 +345,7 @@ class OntologyMapping(BaseModel):
         except json.JSONDecodeError:
             # Fallback to top-1
             if candidates:
-                return _OntologyMatch(
-                    entry=candidates[0][0], confidence=candidates[0][1]
-                )
+                return _OntologyMatch(entry=candidates[0][0], confidence=candidates[0][1])
             return None
 
         selected_id = data.get("selected_id")
@@ -403,9 +385,7 @@ class OntologyMapping(BaseModel):
         # Identify values needing augmentation
         to_augment: list[str] = []
         augment_indices: list[int] = []
-        for i, (value, candidates) in enumerate(
-            zip(values, nn_results, strict=True)
-        ):
+        for i, (value, candidates) in enumerate(zip(values, nn_results, strict=True)):
             top_score = candidates[0][1] if candidates else 0.0
             if top_score < self.augmentation_skip_threshold:
                 to_augment.append(value)
@@ -423,9 +403,7 @@ class OntologyMapping(BaseModel):
         )
 
         # Generate phrasings via LLM
-        phrasings_per_value = await self._generate_phrasings(
-            client, to_augment, context_field
-        )
+        phrasings_per_value = await self._generate_phrasings(client, to_augment, context_field)
 
         # Flatten phrasings and embed them
         flat_phrasings: list[str] = []
@@ -465,10 +443,8 @@ class OntologyMapping(BaseModel):
 
         for batch_start in range(0, len(values), self.augmentation_batch_size):
             batch = values[batch_start : batch_start + self.augmentation_batch_size]
-            user_prompt = (
-                f'Field: "{context_field}"\n'
-                f"Terms to rephrase:\n"
-                + "\n".join(f"  - {v}" for v in batch)
+            user_prompt = f'Field: "{context_field}"\nTerms to rephrase:\n' + "\n".join(
+                f"  - {v}" for v in batch
             )
 
             try:
@@ -540,8 +516,7 @@ class OntologyMapping(BaseModel):
                     "synonyms": list(match.entry.synonyms),
                 }
                 explanations[value] = (
-                    f"→ {match.entry.name} ({match.entry.id}), "
-                    f"confidence={match.confidence:.3f}"
+                    f"→ {match.entry.name} ({match.entry.id}), confidence={match.confidence:.3f}"
                 )
                 if match.rationale:
                     explanations[value] += f": {match.rationale}"

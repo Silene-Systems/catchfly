@@ -129,9 +129,7 @@ class TestRoundtripWithOptionalFields:
         optional_fields: dict[str, type],
     ) -> None:
         # Remove overlapping keys (optional yields to required)
-        optional_fields = {
-            k: v for k, v in optional_fields.items() if k not in required_fields
-        }
+        optional_fields = {k: v for k, v in optional_fields.items() if k not in required_fields}
         if not required_fields:
             return  # need at least one field
 

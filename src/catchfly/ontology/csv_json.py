@@ -35,14 +35,8 @@ class CSVSource:
                 )
             for row in reader:
                 raw_synonyms = row.get("synonyms", "")
-                synonyms = tuple(
-                    s.strip() for s in raw_synonyms.split(";") if s.strip()
-                )
-                entries.append(
-                    OntologyEntry(
-                        id=row["id"], name=row["name"], synonyms=synonyms
-                    )
-                )
+                synonyms = tuple(s.strip() for s in raw_synonyms.split(";") if s.strip())
+                entries.append(OntologyEntry(id=row["id"], name=row["name"], synonyms=synonyms))
 
         logger.info("CSVSource: loaded %d entries from %s", len(entries), self.path)
         return entries
@@ -61,15 +55,13 @@ class JSONSource:
         data = json.loads(self.path.read_text(encoding="utf-8"))
         if not isinstance(data, list):
             raise ValueError(
-                f"JSON file {self.path} must contain a list of objects, "
-                f"got {type(data).__name__}"
+                f"JSON file {self.path} must contain a list of objects, got {type(data).__name__}"
             )
         entries: list[OntologyEntry] = []
         for i, item in enumerate(data):
             if not isinstance(item, dict):
                 raise ValueError(
-                    f"JSON entry {i} in {self.path} must be an object, "
-                    f"got {type(item).__name__}"
+                    f"JSON entry {i} in {self.path} must be an object, got {type(item).__name__}"
                 )
             for key in ("id", "name"):
                 if key not in item:

@@ -200,9 +200,7 @@ class KLLMeansClustering(BaseModel):
         **kwargs: Any,
     ) -> NormalizationResult:
         """Normalize values synchronously."""
-        return run_sync(
-            self.anormalize(values, context_field=context_field, **kwargs)
-        )
+        return run_sync(self.anormalize(values, context_field=context_field, **kwargs))
 
     # ------------------------------------------------------------------
     # Initialization
@@ -312,7 +310,7 @@ class KLLMeansClustering(BaseModel):
                 continue
 
             # Ask LLM for summary
-            member_list = "\n".join(f"- {m}" for m in members[:self.max_members_in_prompt])
+            member_list = "\n".join(f"- {m}" for m in members[: self.max_members_in_prompt])
             try:
                 response = await llm_client.acomplete(
                     [
@@ -358,7 +356,7 @@ class KLLMeansClustering(BaseModel):
                 names.append(members[0])
                 continue
 
-            member_list = "\n".join(f"- {m}" for m in members[:self.max_members_in_prompt])
+            member_list = "\n".join(f"- {m}" for m in members[: self.max_members_in_prompt])
             try:
                 response = await llm_client.acomplete(
                     [

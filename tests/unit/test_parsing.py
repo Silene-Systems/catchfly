@@ -32,5 +32,5 @@ class TestStripMarkdownFences:
         assert strip_markdown_fences(text) == '{"a": 1,\n"b": 2}'
 
     def test_no_fence_with_backticks_in_content(self):
-        text = 'Use `code` here'
-        assert strip_markdown_fences(text) == 'Use `code` here'
+        text = "Use `code` here"
+        assert strip_markdown_fences(text) == "Use `code` here"

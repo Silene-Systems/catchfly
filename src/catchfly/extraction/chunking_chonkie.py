@@ -102,9 +102,7 @@ class SentenceChunking(BaseModel):
     def chunk(self, document: Document) -> list[Document]:
         """Split a document at sentence boundaries."""
         SentenceChunker = _import_chonkie("SentenceChunker")
-        chunker = SentenceChunker(
-            chunk_size=self.chunk_size, chunk_overlap=self.overlap
-        )
+        chunker = SentenceChunker(chunk_size=self.chunk_size, chunk_overlap=self.overlap)
         chunks = chunker(document.content)
         if not chunks:
             return [document]
@@ -134,9 +132,7 @@ class RecursiveChunking(BaseModel):
         """Split a document using hierarchical delimiter rules."""
         RecursiveChunker = _import_chonkie("RecursiveChunker")
         if self.recipe:
-            chunker = RecursiveChunker.from_recipe(
-                self.recipe, chunk_size=self.chunk_size
-            )
+            chunker = RecursiveChunker.from_recipe(self.recipe, chunk_size=self.chunk_size)
         else:
             chunker = RecursiveChunker(chunk_size=self.chunk_size)
         chunks = chunker(document.content)

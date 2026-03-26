@@ -66,8 +66,7 @@ def _build_user_prompt(
             parts.append(f"  Sample values: [{sample_str}]")
 
     parts.append(
-        "\nWhich fields would benefit from normalization? "
-        "Output ONLY a JSON array of field names."
+        "\nWhich fields would benefit from normalization? Output ONLY a JSON array of field names."
     )
     return "\n".join(parts)
 
@@ -125,8 +124,7 @@ class LLMFieldSelector(BaseModel):
             field_type = spec.get("type", "")
             is_string = field_type == "string"
             is_string_array = (
-                field_type == "array"
-                and spec.get("items", {}).get("type") == "string"
+                field_type == "array" and spec.get("items", {}).get("type") == "string"
             )
             if not (is_string or is_string_array):
                 continue
@@ -136,7 +134,9 @@ class LLMFieldSelector(BaseModel):
                 val = (
                     getattr(record, field_name, None)
                     if hasattr(record, field_name)
-                    else record.get(field_name) if isinstance(record, dict) else None
+                    else record.get(field_name)
+                    if isinstance(record, dict)
+                    else None
                 )
                 if val is None:
                     continue

@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 # Mocks
 # ---------------------------------------------------------------------------
 
+
 class MockOntologyEmbedder:
     """Embedder with controlled vectors for ontology + query matching."""
 
@@ -52,6 +53,7 @@ class MockRerankingLLM:
             user_msg = messages[-1]["content"]
             # Extract first ontology ID from the prompt
             import re
+
             match = re.search(r"\(([A-Z]+:\d+)\)", user_msg)
             selected_id = match.group(1) if match else None
             data = {
@@ -60,9 +62,7 @@ class MockRerankingLLM:
                 "rationale": "best match",
             }
         self.call_count += 1
-        return LLMResponse(
-            content=json.dumps(data), input_tokens=100, output_tokens=50
-        )
+        return LLMResponse(content=json.dumps(data), input_tokens=100, output_tokens=50)
 
 
 SAMPLE_ENTRIES = [
@@ -105,6 +105,7 @@ def _patch_source(
         class _MockSource:
             def load(self) -> list[OntologyEntry]:
                 return list(_entries)
+
         return _MockSource()
 
     mod.OntologyMapping._resolve_source = _mock_resolve  # type: ignore[assignment]
@@ -119,6 +120,7 @@ def _patch_source(
 # Tests
 # ---------------------------------------------------------------------------
 
+
 class TestOntologyMapping:
     async def test_empty_values(self) -> None:
         normalizer = OntologyMapping(ontology="hpo")
@@ -129,7 +131,9 @@ class TestOntologyMapping:
         """Value matching an ontology term name maps correctly without LLM."""
         embedder = MockOntologyEmbedder(_VECTORS)
         normalizer = OntologyMapping(
-            ontology="hpo", reranking_model=None, embedding_client=embedder,
+            ontology="hpo",
+            reranking_model=None,
+            embedding_client=embedder,
         )
 
         with _patch_source():
@@ -141,7 +145,9 @@ class TestOntologyMapping:
     async def test_multiple_values(self) -> None:
         embedder = MockOntologyEmbedder(_VECTORS)
         normalizer = OntologyMapping(
-            ontology="hpo", reranking_model=None, embedding_client=embedder,
+            ontology="hpo",
+            reranking_model=None,
+            embedding_client=embedder,
         )
 
         with _patch_source():
@@ -158,8 +164,10 @@ class TestOntologyMapping:
         embedder = MockOntologyEmbedder(_VECTORS)
         mock_llm = MockRerankingLLM()
         normalizer = OntologyMapping(
-            ontology="hpo", reranking_model="mock",
-            embedding_client=embedder, client=mock_llm,
+            ontology="hpo",
+            reranking_model="mock",
+            embedding_client=embedder,
+            client=mock_llm,
         )
 
         with _patch_source():
@@ -174,7 +182,9 @@ class TestOntologyMapping:
     async def test_explain_includes_ontology_id(self) -> None:
         embedder = MockOntologyEmbedder(_VECTORS)
         normalizer = OntologyMapping(
-            ontology="hpo", reranking_model=None, embedding_client=embedder,
+            ontology="hpo",
+            reranking_model=None,
+            embedding_client=embedder,
         )
 
         with _patch_source():
@@ -192,8 +202,10 @@ class TestOntologyMapping:
             responses=[{"selected_id": "HP:002", "confidence": 0.8, "rationale": "override"}]
         )
         normalizer = OntologyMapping(
-            ontology="hpo", reranking_model="mock",
-            embedding_client=embedder, client=mock_llm,
+            ontology="hpo",
+            reranking_model="mock",
+            embedding_client=embedder,
+            client=mock_llm,
         )
 
         with _patch_source():
@@ -205,7 +217,9 @@ class TestOntologyMapping:
     async def test_sync_wrapper(self) -> None:
         embedder = MockOntologyEmbedder(_VECTORS)
         normalizer = OntologyMapping(
-            ontology="hpo", reranking_model=None, embedding_client=embedder,
+            ontology="hpo",
+            reranking_model=None,
+            embedding_client=embedder,
         )
 
         with _patch_source():
@@ -216,7 +230,9 @@ class TestOntologyMapping:
     async def test_n_mapped_in_metadata(self) -> None:
         embedder = MockOntologyEmbedder(_VECTORS)
         normalizer = OntologyMapping(
-            ontology="hpo", reranking_model=None, embedding_client=embedder,
+            ontology="hpo",
+            reranking_model=None,
+            embedding_client=embedder,
         )
 
         with _patch_source():
@@ -320,6 +336,7 @@ class MockAugmentingLLM:
         else:
             # Reranking call — select first candidate
             import re
+
             match = re.search(r"\(([A-Z]+:\d+)\)", user_msg)
             selected_id = match.group(1) if match else None
             data = {
@@ -328,9 +345,7 @@ class MockAugmentingLLM:
                 "rationale": "best match",
             }
 
-        return LLMResponse(
-            content=json.dumps(data), input_tokens=100, output_tokens=50
-        )
+        return LLMResponse(content=json.dumps(data), input_tokens=100, output_tokens=50)
 
 
 class TestRAGAugmentation:

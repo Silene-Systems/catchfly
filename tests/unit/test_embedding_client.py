@@ -178,9 +178,7 @@ class TestSentenceTransformerEmbeddingClient:
     def test_cache_eviction(self) -> None:
         import numpy as np
 
-        client = SentenceTransformerEmbeddingClient(
-            device="cpu", max_cache_size=2
-        )
+        client = SentenceTransformerEmbeddingClient(device="cpu", max_cache_size=2)
         mock_model = MagicMock()
         client._model_instance = mock_model
 

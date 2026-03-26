@@ -63,8 +63,7 @@ class StatisticalFieldSelector(BaseModel):
             field_type = spec.get("type", "")
             is_string = field_type == "string"
             is_string_array = (
-                field_type == "array"
-                and spec.get("items", {}).get("type") == "string"
+                field_type == "array" and spec.get("items", {}).get("type") == "string"
             )
             if not (is_string or is_string_array):
                 logger.debug(
@@ -88,7 +87,9 @@ class StatisticalFieldSelector(BaseModel):
                 val = (
                     getattr(record, field_name, None)
                     if hasattr(record, field_name)
-                    else record.get(field_name) if isinstance(record, dict) else None
+                    else record.get(field_name)
+                    if isinstance(record, dict)
+                    else None
                 )
                 if val is None:
                     continue

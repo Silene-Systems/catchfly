@@ -38,12 +38,8 @@ mapping_dicts = st.dictionaries(
 class TestEveryInputMapped:
     @given(mapping=mapping_dicts, extra_values=value_lists)
     @settings(max_examples=50)
-    def test_all_values_in_mapping(
-        self, mapping: dict[str, str], extra_values: list[str]
-    ) -> None:
-        normalizer = DictionaryNormalization(
-            mapping=mapping, passthrough_unmapped=True
-        )
+    def test_all_values_in_mapping(self, mapping: dict[str, str], extra_values: list[str]) -> None:
+        normalizer = DictionaryNormalization(mapping=mapping, passthrough_unmapped=True)
         # Combine mapped keys with extra values
         values = list(mapping.keys()) + extra_values
         result = normalizer.normalize(values, context_field="test")
@@ -61,12 +57,8 @@ class TestEveryInputMapped:
 class TestMappingValuesAreStrings:
     @given(mapping=mapping_dicts, values=value_lists)
     @settings(max_examples=50)
-    def test_values_are_strings(
-        self, mapping: dict[str, str], values: list[str]
-    ) -> None:
-        normalizer = DictionaryNormalization(
-            mapping=mapping, passthrough_unmapped=True
-        )
+    def test_values_are_strings(self, mapping: dict[str, str], values: list[str]) -> None:
+        normalizer = DictionaryNormalization(mapping=mapping, passthrough_unmapped=True)
         result = normalizer.normalize(values, context_field="test")
 
         for _key, val in result.mapping.items():
@@ -82,9 +74,7 @@ class TestIdempotent:
     @given(mapping=mapping_dicts)
     @settings(max_examples=50)
     def test_canonical_values_stable(self, mapping: dict[str, str]) -> None:
-        normalizer = DictionaryNormalization(
-            mapping=mapping, passthrough_unmapped=True
-        )
+        normalizer = DictionaryNormalization(mapping=mapping, passthrough_unmapped=True)
         # First pass: normalize the keys
         keys = list(mapping.keys())
         result1 = normalizer.normalize(keys, context_field="test")
@@ -136,9 +126,7 @@ class TestCaseInsensitive:
             mapping={"NYC": "New York"},
             case_insensitive=True,
         )
-        result = normalizer.normalize(
-            ["NYC", "nyc", "Nyc", "nyC"], context_field="city"
-        )
+        result = normalizer.normalize(["NYC", "nyc", "Nyc", "nyC"], context_field="city")
         canonicals = set(result.mapping.values())
         assert canonicals == {"New York"}
 
@@ -154,9 +142,7 @@ class TestPassthroughUnmapped:
     def test_unmapped_values_passthrough(
         self, mapping: dict[str, str], unmapped: list[str]
     ) -> None:
-        normalizer = DictionaryNormalization(
-            mapping=mapping, passthrough_unmapped=True
-        )
+        normalizer = DictionaryNormalization(mapping=mapping, passthrough_unmapped=True)
         # Only use values NOT in the mapping
         truly_unmapped = [v for v in unmapped if v not in mapping]
         if not truly_unmapped:
@@ -174,9 +160,7 @@ class TestPassthroughUnmapped:
             mapping={"NYC": "New York"},
             passthrough_unmapped=True,
         )
-        result = normalizer.normalize(
-            ["NYC", "Chicago", "Denver"], context_field="city"
-        )
+        result = normalizer.normalize(["NYC", "Chicago", "Denver"], context_field="city")
         assert result.mapping["NYC"] == "New York"
         assert result.mapping["Chicago"] == "Chicago"
         assert result.mapping["Denver"] == "Denver"
@@ -191,8 +175,6 @@ class TestEmptyInput:
     @given(mapping=mapping_dicts)
     @settings(max_examples=20)
     def test_empty_values_empty_mapping(self, mapping: dict[str, str]) -> None:
-        normalizer = DictionaryNormalization(
-            mapping=mapping, passthrough_unmapped=True
-        )
+        normalizer = DictionaryNormalization(mapping=mapping, passthrough_unmapped=True)
         result = normalizer.normalize([], context_field="test")
         assert result.mapping == {}

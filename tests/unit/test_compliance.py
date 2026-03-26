@@ -29,9 +29,7 @@ class _MockLLMForCanonicalization:
     def __init__(self, values: list[str]) -> None:
         self._values = values
 
-    async def acomplete(
-        self, messages: list[dict[str, str]], **kwargs: Any
-    ) -> LLMResponse:
+    async def acomplete(self, messages: list[dict[str, str]], **kwargs: Any) -> LLMResponse:
         groups = [
             {
                 "canonical": v,
@@ -58,9 +56,7 @@ class _MockLLMForCanonicalization:
 class _MockLLMForDiscovery:
     """Returns a valid JSON Schema for SinglePassDiscovery."""
 
-    async def acomplete(
-        self, messages: list[dict[str, str]], **kwargs: Any
-    ) -> LLMResponse:
+    async def acomplete(self, messages: list[dict[str, str]], **kwargs: Any) -> LLMResponse:
         schema = {
             "type": "object",
             "properties": {
@@ -91,9 +87,7 @@ class _MockLLMForExtraction:
     def __init__(self, response_data: dict[str, Any]) -> None:
         self._data = response_data
 
-    async def acomplete(
-        self, messages: list[dict[str, str]], **kwargs: Any
-    ) -> LLMResponse:
+    async def acomplete(self, messages: list[dict[str, str]], **kwargs: Any) -> LLMResponse:
         return LLMResponse(
             content=json.dumps(self._data),
             input_tokens=200,
@@ -113,13 +107,9 @@ class _MockLLMForExtraction:
 class _MockKLLMeansLLM:
     """Returns first member as canonical name for KLLMeansClustering."""
 
-    async def acomplete(
-        self, messages: list[dict[str, str]], **kwargs: Any
-    ) -> LLMResponse:
+    async def acomplete(self, messages: list[dict[str, str]], **kwargs: Any) -> LLMResponse:
         user_msg = messages[-1]["content"] if messages else ""
-        lines = [
-            ln.strip("- ").strip() for ln in user_msg.split("\n") if ln.startswith("-")
-        ]
+        lines = [ln.strip("- ").strip() for ln in user_msg.split("\n") if ln.startswith("-")]
         name = lines[0] if lines else "cluster"
         return LLMResponse(content=name, input_tokens=50, output_tokens=10)
 
@@ -146,9 +136,7 @@ class _MockKLLMeansEmbedder:
         return [((h >> (i * 4)) & 0xF) / 15.0 for i in range(self.dim)]
 
 
-def _make_clustered_embeddings(
-    groups: list[list[str]], dim: int = 8
-) -> dict[str, list[float]]:
+def _make_clustered_embeddings(groups: list[list[str]], dim: int = 8) -> dict[str, list[float]]:
     """Create embeddings where texts in the same group are close together."""
     embeddings: dict[str, list[float]] = {}
     for group_idx, group in enumerate(groups):
@@ -158,8 +146,6 @@ def _make_clustered_embeddings(
             vec = center + np.random.default_rng(hash(text) % 2**31).normal(0, 0.05, dim)
             embeddings[text] = vec.tolist()
     return embeddings
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -191,9 +177,7 @@ async def check_normalizer_compliance(normalizer: Any, values: list[str]) -> Non
         "Single input must return NormalizationResult"
     )
     assert "alpha" in single_result.mapping, "Single value must appear in mapping"
-    assert isinstance(single_result.mapping["alpha"], str), (
-        "Mapping values must be strings"
-    )
+    assert isinstance(single_result.mapping["alpha"], str), "Mapping values must be strings"
 
     # ---- Normal multi-value input ----
     result = await normalizer.anormalize(values, context_field="test")
@@ -214,9 +198,7 @@ async def check_normalizer_compliance(normalizer: Any, values: list[str]) -> Non
         assert v in dup_result.mapping, f"Value '{v}' missing from duplicate mapping"
 
 
-async def check_discovery_compliance(
-    strategy: Any, documents: list[Document]
-) -> None:
+async def check_discovery_compliance(strategy: Any, documents: list[Document]) -> None:
     """Verify a discovery strategy meets the DiscoveryStrategy Protocol contract.
 
     Checks:
@@ -307,9 +289,7 @@ class TestNormalizerCompliance:
             await check_normalizer_compliance(normalizer, NORMALIZATION_VALUES)
 
     async def test_llm_canonicalization(self) -> None:
-        mock_llm = _MockLLMForCanonicalization(
-            list(set(NORMALIZATION_VALUES))
-        )
+        mock_llm = _MockLLMForCanonicalization(list(set(NORMALIZATION_VALUES)))
         normalizer = LLMCanonicalization(model="mock", client=mock_llm)
 
         await check_normalizer_compliance(normalizer, NORMALIZATION_VALUES)

@@ -33,9 +33,7 @@ class TestCompositeNormalization:
     async def test_routes_to_field_strategy(self) -> None:
         composite = CompositeNormalization(
             field_strategies={
-                "city": DictionaryNormalization(
-                    mapping={"NYC": "New York"}
-                ),
+                "city": DictionaryNormalization(mapping={"NYC": "New York"}),
                 "name": _UppercaseNorm(),
             }
         )
@@ -59,9 +57,7 @@ class TestCompositeNormalization:
             await composite.anormalize(["val"], context_field="missing")
 
     def test_sync_wrapper(self) -> None:
-        composite = CompositeNormalization(
-            field_strategies={"x": _UppercaseNorm()}
-        )
+        composite = CompositeNormalization(field_strategies={"x": _UppercaseNorm()})
         result = composite.normalize(["abc"], context_field="x")
         assert result.mapping["abc"] == "ABC"
 
@@ -78,16 +74,12 @@ class TestCompositeNormalization:
             discovery=MockDiscovery(),
             extraction=MockExtraction(),
             normalization={
-                "title": DictionaryNormalization(
-                    mapping={"Extracted from doc0": "Normalized"}
-                ),
+                "title": DictionaryNormalization(mapping={"Extracted from doc0": "Normalized"}),
             },
         )
         assert isinstance(pipeline.normalization, CompositeNormalization)
 
         docs = [Document(content="test", id="doc0")]
-        result = await pipeline.arun(
-            docs, domain_hint="test", normalize_fields=["title"]
-        )
+        result = await pipeline.arun(docs, domain_hint="test", normalize_fields=["title"])
         assert "title" in result.normalizations
         assert result.normalizations["title"].mapping["Extracted from doc0"] == "Normalized"

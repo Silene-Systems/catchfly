@@ -265,9 +265,7 @@ class SentenceTransformerEmbeddingClient:
 
             all_embeddings = await asyncio.to_thread(self._encode, uncached_texts)
 
-            for idx, embedding in zip(
-                uncached_indices, all_embeddings, strict=True
-            ):
+            for idx, embedding in zip(uncached_indices, all_embeddings, strict=True):
                 text = texts[idx]
                 if len(self._cache) >= self.max_cache_size:
                     oldest_key = next(iter(self._cache))
@@ -304,9 +302,7 @@ class SentenceTransformerEmbeddingClient:
 
             all_embeddings = self._encode(uncached_texts)
 
-            for idx, embedding in zip(
-                uncached_indices, all_embeddings, strict=True
-            ):
+            for idx, embedding in zip(uncached_indices, all_embeddings, strict=True):
                 text = texts[idx]
                 if len(self._cache) >= self.max_cache_size:
                     oldest_key = next(iter(self._cache))

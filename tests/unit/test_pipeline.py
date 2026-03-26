@@ -156,9 +156,7 @@ class TestPipeline:
             extraction=MockExtraction(),
             normalization=MockNormalization(),
         )
-        result = await pipeline.arun(
-            _make_docs(2), domain_hint="test", normalize_fields="all"
-        )
+        result = await pipeline.arun(_make_docs(2), domain_hint="test", normalize_fields="all")
         # MockDiscovery schema has "title" (string) and "rating" (integer)
         # Only "title" should be normalized
         assert "title" in result.normalizations
@@ -321,9 +319,7 @@ class TestGlobDocuments:
             discovery=MockDiscovery(),
             extraction=MockExtraction(),
         )
-        result = await pipeline.arun(
-            [str(p / "*.txt")], domain_hint="test"
-        )
+        result = await pipeline.arun([str(p / "*.txt")], domain_hint="test")
         assert len(result.records) == 2
 
 
@@ -371,9 +367,7 @@ class TestFieldSelector:
             normalization=MockNormalization(),
             field_selector=selector,
         )
-        result = await pipeline.arun(
-            _make_docs(2), domain_hint="test", normalize_fields=["title"]
-        )
+        result = await pipeline.arun(_make_docs(2), domain_hint="test", normalize_fields=["title"])
 
         # Selector should NOT have been called
         assert not selector.called

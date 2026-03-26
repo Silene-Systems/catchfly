@@ -19,8 +19,7 @@ def _import_numpy() -> Any:
         return np
     except ImportError as e:
         raise ImportError(
-            "numpy is required for OntologyIndex. "
-            "Install it with: pip install catchfly[medical]"
+            "numpy is required for OntologyIndex. Install it with: pip install catchfly[medical]"
         ) from e
 
 
@@ -75,18 +74,14 @@ class OntologyIndex:
         # Try loading from cache
         if self._cache_path and self._load_cache(np):
             self._built = True
-            logger.info(
-                "OntologyIndex: loaded %d embeddings from cache", len(self._texts)
-            )
+            logger.info("OntologyIndex: loaded %d embeddings from cache", len(self._texts))
             return
 
         # Embed all texts
         logger.info("OntologyIndex: embedding %d texts", len(self._texts))
         raw = await self._embedding_client.aembed(self._texts)
         self._embedding_matrix = np.array(raw, dtype=np.float32)
-        self._norms = np.linalg.norm(
-            self._embedding_matrix, axis=1, keepdims=True
-        )
+        self._norms = np.linalg.norm(self._embedding_matrix, axis=1, keepdims=True)
         self._norms = np.where(self._norms == 0, 1.0, self._norms)
         self._built = True
 
@@ -174,9 +169,7 @@ class OntologyIndex:
                 entry = self._text_to_entry[i]
                 context_parts: list[str] = []
                 if entry.synonyms:
-                    context_parts.append(
-                        f"also known as: {', '.join(entry.synonyms[:3])}"
-                    )
+                    context_parts.append(f"also known as: {', '.join(entry.synonyms[:3])}")
                 context_parts.append(f"[{entry.id}]")
                 self._texts[i] = f"{self._texts[i]} ({'; '.join(context_parts)})"
 
@@ -202,9 +195,7 @@ class OntologyIndex:
             "embeddings": self._embedding_matrix.tolist(),
         }
         self._cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self._cache_path.write_text(
-            json.dumps(data), encoding="utf-8"
-        )
+        self._cache_path.write_text(json.dumps(data), encoding="utf-8")
         logger.info("OntologyIndex: saved cache to %s", self._cache_path)
 
     def _load_cache(self, np: Any) -> bool:
@@ -229,8 +220,6 @@ class OntologyIndex:
             return False
 
         self._embedding_matrix = np.array(data["embeddings"], dtype=np.float32)
-        self._norms = np.linalg.norm(
-            self._embedding_matrix, axis=1, keepdims=True
-        )
+        self._norms = np.linalg.norm(self._embedding_matrix, axis=1, keepdims=True)
         self._norms = np.where(self._norms == 0, 1.0, self._norms)
         return True

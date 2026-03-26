@@ -292,9 +292,7 @@ class TestThreeStageDiscovery:
         """_build_schema raises DiscoveryError when properties is empty."""
         empty_schema: dict[str, Any] = {"type": "object", "properties": {}}
         with pytest.raises(DiscoveryError, match="no properties"):
-            ThreeStageDiscovery._build_schema(
-                empty_schema, {}, {"stages_completed": 1}, stage=1
-            )
+            ThreeStageDiscovery._build_schema(empty_schema, {}, {"stages_completed": 1}, stage=1)
 
     def test_build_schema_raises_on_conversion_failure(self) -> None:
         """_build_schema raises DiscoveryError when Pydantic conversion fails."""
@@ -303,6 +301,4 @@ class TestThreeStageDiscovery:
             "properties": {"x": "not_a_dict"},
         }
         with pytest.raises(DiscoveryError, match="failed to build Pydantic model"):
-            ThreeStageDiscovery._build_schema(
-                bad_schema, {}, {"stages_completed": 2}, stage=2
-            )
+            ThreeStageDiscovery._build_schema(bad_schema, {}, {"stages_completed": 2}, stage=2)

@@ -61,9 +61,7 @@ class CompositeNormalization:
             context_field,
             type(strategy).__name__,
         )
-        return await strategy.anormalize(
-            values, context_field=context_field, **kwargs
-        )
+        return await strategy.anormalize(values, context_field=context_field, **kwargs)
 
     def normalize(
         self,
@@ -72,6 +70,4 @@ class CompositeNormalization:
         **kwargs: Any,
     ) -> NormalizationResult:
         """Synchronous wrapper."""
-        return run_sync(
-            self.anormalize(values, context_field=context_field, **kwargs)
-        )
+        return run_sync(self.anormalize(values, context_field=context_field, **kwargs))

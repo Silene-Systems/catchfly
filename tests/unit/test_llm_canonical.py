@@ -109,7 +109,10 @@ class TestLLMCanonicalization:
             ]
         )
         normalizer = LLMCanonicalization(
-            model="mock", max_values_per_prompt=5, batch_size=3, hierarchical_merge=False,
+            model="mock",
+            max_values_per_prompt=5,
+            batch_size=3,
+            hierarchical_merge=False,
             client=mock_llm,
         )
 
@@ -206,7 +209,7 @@ class TestBuildSystemPrompt:
     def test_without_metadata_returns_base_prompt(self) -> None:
         for arg in (None, {}):
             prompt = _build_system_prompt("city", arg)
-            assert "field \"city\"" in prompt
+            assert 'field "city"' in prompt
             assert "Schema context" not in prompt
 
     def test_with_full_metadata(self) -> None:
@@ -396,7 +399,10 @@ class TestHierarchicalMerge:
             ]
         )
         normalizer = LLMCanonicalization(
-            model="mock", max_values_per_prompt=3, batch_size=2, hierarchical_merge=True,
+            model="mock",
+            max_values_per_prompt=3,
+            batch_size=2,
+            hierarchical_merge=True,
             client=mock_llm,
         )
 
@@ -414,7 +420,10 @@ class TestHierarchicalMerge:
             ]
         )
         normalizer = LLMCanonicalization(
-            model="mock", max_values_per_prompt=3, batch_size=2, hierarchical_merge=False,
+            model="mock",
+            max_values_per_prompt=3,
+            batch_size=2,
+            hierarchical_merge=False,
             client=mock_llm,
         )
 
@@ -433,7 +442,9 @@ class TestHierarchicalMerge:
             ]
         )
         normalizer = LLMCanonicalization(
-            model="mock", max_values_per_prompt=200, hierarchical_merge=True,
+            model="mock",
+            max_values_per_prompt=200,
+            hierarchical_merge=True,
             client=mock_llm,
         )
 
@@ -457,7 +468,10 @@ class TestHierarchicalMerge:
             responses=[batch_groups, batch_groups, batch_groups, merge_groups]
         )
         normalizer = LLMCanonicalization(
-            model="mock", max_values_per_prompt=3, batch_size=2, hierarchical_merge=True,
+            model="mock",
+            max_values_per_prompt=3,
+            batch_size=2,
+            hierarchical_merge=True,
             client=mock_llm,
         )
 
@@ -478,19 +492,18 @@ class TestHierarchicalMerge:
             {"canonical": "A", "members": ["A"], "rationale": ""},
             {"canonical": "B", "members": ["B"], "rationale": ""},
         ]
-        mock_llm = MockCanonicalizationLLM(
-            responses=[batch_groups, batch_groups, merge_groups]
-        )
+        mock_llm = MockCanonicalizationLLM(responses=[batch_groups, batch_groups, merge_groups])
         normalizer = LLMCanonicalization(
-            model="mock", max_values_per_prompt=3, batch_size=2, hierarchical_merge=True,
+            model="mock",
+            max_values_per_prompt=3,
+            batch_size=2,
+            hierarchical_merge=True,
             client=mock_llm,
         )
 
         metadata = {"description": "Product category"}
         values = [f"val_{i}" for i in range(4)]
-        await normalizer.anormalize(
-            values, context_field="product_type", field_metadata=metadata
-        )
+        await normalizer.anormalize(values, context_field="product_type", field_metadata=metadata)
 
         # The last call is the hierarchical merge — check its system prompt
         merge_system_msg = mock_llm.captured_messages[-1][0]["content"]

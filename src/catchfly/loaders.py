@@ -33,9 +33,7 @@ def load_glob(pattern: str, *, encoding: str = "utf-8") -> list[Document]:
             continue
         try:
             content = path.read_text(encoding=encoding)
-            documents.append(
-                Document(content=content, id=path.name, source=str(path))
-            )
+            documents.append(Document(content=content, id=path.name, source=str(path)))
         except (OSError, UnicodeDecodeError):
             logger.warning("load_glob: failed to read '%s'", p, exc_info=True)
 

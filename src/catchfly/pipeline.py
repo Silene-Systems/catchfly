@@ -194,9 +194,7 @@ class Pipeline:
                     from catchfly.schema.converters import json_schema_to_pydantic
 
                     try:
-                        pydantic_model = json_schema_to_pydantic(
-                            schema, "UserSchema"
-                        )
+                        pydantic_model = json_schema_to_pydantic(schema, "UserSchema")
                     except SchemaError as e:
                         raise SchemaError(
                             f"Could not convert dict schema to Pydantic model. "
@@ -298,9 +296,7 @@ class Pipeline:
                     self._inject_callback(
                         self.field_selector, tracker.make_callback("field_selection")
                     )
-                normalize_fields = await self.field_selector.aselect(
-                    result.schema, result.records
-                )
+                normalize_fields = await self.field_selector.aselect(result.schema, result.records)
                 logger.info(
                     "Pipeline: field selector chose %d fields: %s",
                     len(normalize_fields),

@@ -84,12 +84,10 @@ packages = ["src/catchfly"]
 [tool.ruff]
 target-version = "py310"
 line-length = 99
+exclude = ["notebooks", "scripts", "benchmarks"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH"]
-
-[tool.ruff.lint.per-file-ignores]
-"scripts/*" = ["E501"]
 
 [tool.mypy]
 python_version = "3.10"

@@ -212,9 +212,7 @@ class LLMCanonicalization(BaseModel):
                 client, unique_values, context_field, field_metadata
             )
         else:
-            groups = await self._map_reduce(
-                client, unique_values, context_field, field_metadata
-            )
+            groups = await self._map_reduce(client, unique_values, context_field, field_metadata)
 
         return self._build_result(groups, value_counts, context_field)
 
@@ -260,9 +258,7 @@ class LLMCanonicalization(BaseModel):
         for group in groups:
             original_members: list[str] = []
             for member in group["members"]:
-                original_members.extend(
-                    sanitized_to_originals.get(member, [member])
-                )
+                original_members.extend(sanitized_to_originals.get(member, [member]))
             group["members"] = original_members
 
         return groups
@@ -286,14 +282,11 @@ class LLMCanonicalization(BaseModel):
                 len(values),
             )
             try:
-                batch_groups = await self._canonicalize_batch(
-                    client, batch, field, field_metadata
-                )
+                batch_groups = await self._canonicalize_batch(client, batch, field, field_metadata)
                 all_groups.extend(batch_groups)
             except (ProviderError, NormalizationError) as e:
                 logger.warning(
-                    "LLMCanonicalization: batch %d-%d failed, "
-                    "values kept as singletons: %s",
+                    "LLMCanonicalization: batch %d-%d failed, values kept as singletons: %s",
                     i,
                     min(i + self.batch_size, len(values)),
                     e,
@@ -313,9 +306,7 @@ class LLMCanonicalization(BaseModel):
         # Hierarchical merge: second LLM pass to consolidate semantically similar groups
         if self.hierarchical_merge and len(merged) > 1:
             pre_hierarchical = len(merged)
-            merged = await self._hierarchical_merge(
-                client, merged, field, field_metadata
-            )
+            merged = await self._hierarchical_merge(client, merged, field, field_metadata)
             logger.info(
                 "LLMCanonicalization: hierarchical merge %d → %d groups",
                 pre_hierarchical,
@@ -369,9 +360,7 @@ class LLMCanonicalization(BaseModel):
                         ],
                         temperature=self.temperature,
                     )
-                    all_merge_groups.extend(
-                        self._parse_groups(response.content, batch_names)
-                    )
+                    all_merge_groups.extend(self._parse_groups(response.content, batch_names))
                 merge_instructions = self._merge_groups(all_merge_groups)
 
             new_groups = self._apply_hierarchical_merge(groups, merge_instructions)
@@ -402,9 +391,7 @@ class LLMCanonicalization(BaseModel):
 
         merge_instructions: groups where 'members' are canonical names to consolidate.
         """
-        lookup: dict[str, dict[str, Any]] = {
-            g["canonical"]: g for g in original_groups
-        }
+        lookup: dict[str, dict[str, Any]] = {g["canonical"]: g for g in original_groups}
         consumed: set[str] = set()
         result: list[dict[str, Any]] = []
 
@@ -432,11 +419,13 @@ class LLMCanonicalization(BaseModel):
             if merged_members:
                 rationale_parts = [rationale] + merged_rationales
                 combined_rationale = "; ".join(filter(None, rationale_parts))
-                result.append({
-                    "canonical": surviving_canonical,
-                    "members": merged_members,
-                    "rationale": combined_rationale,
-                })
+                result.append(
+                    {
+                        "canonical": surviving_canonical,
+                        "members": merged_members,
+                        "rationale": combined_rationale,
+                    }
+                )
 
         # Keep any original groups that weren't consumed by any merge instruction
         for g in original_groups:

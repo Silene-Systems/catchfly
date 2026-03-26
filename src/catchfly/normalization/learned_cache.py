@@ -63,9 +63,7 @@ class LearnedDictionaryCache(BaseModel):
         cache_path = Path(self.path)
         existing = self._load_raw(cache_path)
 
-        field_mappings: dict[str, dict[str, Any]] = existing.get(
-            "field_mappings", {}
-        )
+        field_mappings: dict[str, dict[str, Any]] = existing.get("field_mappings", {})
 
         for field, result in normalizations.items():
             strategy = result.metadata.get("strategy", "unknown")

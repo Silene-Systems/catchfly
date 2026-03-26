@@ -19,6 +19,7 @@ def _has_recipe_deps() -> bool:
     except ImportError:
         return False
 
+
 from catchfly.extraction.chunking_chonkie import (  # noqa: E402
     RecursiveChunking,
     SentenceChunking,
@@ -72,10 +73,7 @@ class TestTokenChunking:
             assert chunk.metadata["parent_id"] == "doc1"
 
     def test_chunk_batch(self) -> None:
-        docs = [
-            Document(content="Some text here. " * 100, id=f"doc{i}")
-            for i in range(3)
-        ]
+        docs = [Document(content="Some text here. " * 100, id=f"doc{i}") for i in range(3)]
         strategy = TokenChunking(chunk_size=64, overlap=8)
         all_chunks = strategy.chunk_batch(docs)
         assert len(all_chunks) >= 3

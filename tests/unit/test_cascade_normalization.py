@@ -44,9 +44,7 @@ class TestCascadeNormalization:
         assert isinstance(cascade, NormalizationStrategy)
 
     async def test_empty_values(self) -> None:
-        cascade = CascadeNormalization(
-            steps=[DictionaryNormalization(mapping={"a": "b"})]
-        )
+        cascade = CascadeNormalization(steps=[DictionaryNormalization(mapping={"a": "b"})])
         result = await cascade.anormalize([])
         assert result.mapping == {}
 
@@ -60,9 +58,7 @@ class TestCascadeNormalization:
                 )
             ]
         )
-        result = await cascade.anormalize(
-            ["NYC", "LA", "Chicago"], context_field="city"
-        )
+        result = await cascade.anormalize(["NYC", "LA", "Chicago"], context_field="city")
         assert result.mapping["NYC"] == "New York"
         assert result.mapping["LA"] == "Los Angeles"
         assert result.mapping["Chicago"] == "Chicago"  # passthrough
@@ -73,9 +69,7 @@ class TestCascadeNormalization:
             mapping={"NYC": "New York"},
             passthrough_unmapped=True,
         )
-        step2 = MockPassthroughStrategy(
-            known={"Chi-town": "Chicago", "LA": "Los Angeles"}
-        )
+        step2 = MockPassthroughStrategy(known={"Chi-town": "Chicago", "LA": "Los Angeles"})
         cascade = CascadeNormalization(steps=[step1, step2])
 
         result = await cascade.anormalize(
@@ -89,11 +83,7 @@ class TestCascadeNormalization:
     async def test_unmapped_passthrough(self) -> None:
         """Values no step can handle pass through unchanged."""
         cascade = CascadeNormalization(
-            steps=[
-                DictionaryNormalization(
-                    mapping={"a": "A"}, passthrough_unmapped=True
-                )
-            ]
+            steps=[DictionaryNormalization(mapping={"a": "A"}, passthrough_unmapped=True)]
         )
         result = await cascade.anormalize(["a", "b", "c"])
         assert result.mapping["a"] == "A"
@@ -102,9 +92,7 @@ class TestCascadeNormalization:
 
     async def test_step_metadata(self) -> None:
         """Metadata tracks per-step statistics."""
-        step1 = DictionaryNormalization(
-            mapping={"x": "X"}, passthrough_unmapped=True
-        )
+        step1 = DictionaryNormalization(mapping={"x": "X"}, passthrough_unmapped=True)
         step2 = MockPassthroughStrategy(known={"y": "Y"})
         cascade = CascadeNormalization(steps=[step1, step2])
 
@@ -127,9 +115,7 @@ class TestCascadeNormalization:
         calls: list[int] = []
 
         class TrackingStrategy:
-            async def anormalize(
-                self, values: list[str], **kwargs: Any
-            ) -> NormalizationResult:
+            async def anormalize(self, values: list[str], **kwargs: Any) -> NormalizationResult:
                 calls.append(len(values))
                 mapping = {v: v for v in values}
                 # Map the first value to something else
@@ -164,14 +150,10 @@ class TestCascadeNormalization:
         class CallbackTracker:
             _usage_callback: Any = None
 
-            async def anormalize(
-                self, values: list[str], **kwargs: Any
-            ) -> NormalizationResult:
+            async def anormalize(self, values: list[str], **kwargs: Any) -> NormalizationResult:
                 if self._usage_callback:
                     callbacks_received.append("got_callback")
-                return NormalizationResult(
-                    mapping={v: v for v in values}
-                )
+                return NormalizationResult(mapping={v: v for v in values})
 
         cascade = CascadeNormalization(steps=[CallbackTracker()])
         cascade._usage_callback = lambda *a: None  # type: ignore[attr-defined]
@@ -186,9 +168,7 @@ class TestCascadeNormalization:
 
     async def test_default_factory_with_dictionary(self) -> None:
         """default() with dictionary creates 2-step cascade."""
-        cascade = CascadeNormalization.default(
-            dictionary={"a": "A"}, model="gpt-test"
-        )
+        cascade = CascadeNormalization.default(dictionary={"a": "A"}, model="gpt-test")
         assert len(cascade.steps) == 2
         assert type(cascade.steps[0]).__name__ == "DictionaryNormalization"
         assert type(cascade.steps[1]).__name__ == "LLMCanonicalization"
@@ -208,11 +188,7 @@ class TestCascadeNormalization:
     def test_sync_wrapper(self) -> None:
         """normalize() synchronous wrapper works."""
         cascade = CascadeNormalization(
-            steps=[
-                DictionaryNormalization(
-                    mapping={"a": "A"}, passthrough_unmapped=True
-                )
-            ]
+            steps=[DictionaryNormalization(mapping={"a": "A"}, passthrough_unmapped=True)]
         )
         result = cascade.normalize(["a", "b"])
         assert result.mapping["a"] == "A"
@@ -234,11 +210,7 @@ class TestCascadeNormalization:
     async def test_deduplicates_input(self) -> None:
         """Duplicate input values are deduplicated internally."""
         cascade = CascadeNormalization(
-            steps=[
-                DictionaryNormalization(
-                    mapping={"a": "A"}, passthrough_unmapped=True
-                )
-            ]
+            steps=[DictionaryNormalization(mapping={"a": "A"}, passthrough_unmapped=True)]
         )
         result = await cascade.anormalize(["a", "a", "a", "b"])
         assert len(result.mapping) == 2
@@ -249,17 +221,13 @@ class TestCascadeNormalization:
         calls: list[str] = []
 
         class NeverCalledStrategy:
-            async def anormalize(
-                self, values: list[str], **kwargs: Any
-            ) -> NormalizationResult:
+            async def anormalize(self, values: list[str], **kwargs: Any) -> NormalizationResult:
                 calls.append("called")
                 return NormalizationResult(mapping={v: v for v in values})
 
         cascade = CascadeNormalization(
             steps=[
-                DictionaryNormalization(
-                    mapping={"a": "A", "b": "B"}, passthrough_unmapped=True
-                ),
+                DictionaryNormalization(mapping={"a": "A", "b": "B"}, passthrough_unmapped=True),
                 NeverCalledStrategy(),
             ]
         )
@@ -422,9 +390,7 @@ class TestConfidenceBasedRouting:
 class TestCascadeLearn:
     async def test_learn_prepends_dictionary(self) -> None:
         """learn() prepends a DictionaryNormalization step."""
-        cascade = CascadeNormalization(
-            steps=[MockPassthroughStrategy(known={})]
-        )
+        cascade = CascadeNormalization(steps=[MockPassthroughStrategy(known={})])
         assert len(cascade.steps) == 1
 
         result = NormalizationResult(
@@ -462,18 +428,14 @@ class TestCascadeLearn:
 
     async def test_learn_empty_result_no_change(self) -> None:
         """learn() with no mappings does not modify steps."""
-        cascade = CascadeNormalization(
-            steps=[MockPassthroughStrategy(known={})]
-        )
+        cascade = CascadeNormalization(steps=[MockPassthroughStrategy(known={})])
         result = NormalizationResult(mapping={"a": "a"})  # identity only
         cascade.learn(result)
         assert len(cascade.steps) == 1
 
     async def test_learn_respects_min_confidence(self) -> None:
         """learn() filters by min_confidence."""
-        cascade = CascadeNormalization(
-            steps=[MockPassthroughStrategy(known={})]
-        )
+        cascade = CascadeNormalization(steps=[MockPassthroughStrategy(known={})])
         result = NormalizationResult(
             mapping={"a": "A", "b": "B"},
             metadata={"per_value": {"a": {"confidence": 0.95}, "b": {"confidence": 0.5}}},

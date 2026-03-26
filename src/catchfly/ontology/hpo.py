@@ -46,9 +46,7 @@ class HPOSource:
             if term.obsolete:
                 continue
             synonyms = tuple(syn.description for syn in term.synonyms)
-            entries.append(
-                OntologyEntry(id=term.id, name=term.name, synonyms=synonyms)
-            )
+            entries.append(OntologyEntry(id=term.id, name=term.name, synonyms=synonyms))
 
         logger.info("HPOSource: loaded %d terms", len(entries))
         return entries

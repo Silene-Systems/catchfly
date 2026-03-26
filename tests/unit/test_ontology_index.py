@@ -146,9 +146,7 @@ class TestOntologyIndex:
 
         class BareEmbedder:
             async def aembed(self, texts: list[str]) -> list[list[float]]:
-                return [
-                    [((hash(t) + i) & 0xF) / 15.0 for i in range(8)] for t in texts
-                ]
+                return [[((hash(t) + i) & 0xF) / 15.0 for i in range(8)] for t in texts]
 
         entries = _make_entries()
         cache_path = tmp_path / "cache.json"
@@ -160,18 +158,15 @@ class TestOntologyIndex:
         cache_data = json.loads(cache_path.read_text())
         assert cache_data["model"] == "unknown"
 
+
 class TestHomonymDisambiguation:
     """Tests for homonym detection and disambiguation in OntologyIndex."""
 
     async def test_homonym_detection(self) -> None:
         """Entries with same name but different IDs get disambiguated."""
         entries = [
-            OntologyEntry(
-                id="HP:100", name="Mercury", synonyms=("Hg", "Quicksilver")
-            ),
-            OntologyEntry(
-                id="HP:200", name="Mercury", synonyms=("Planet Mercury",)
-            ),
+            OntologyEntry(id="HP:100", name="Mercury", synonyms=("Hg", "Quicksilver")),
+            OntologyEntry(id="HP:200", name="Mercury", synonyms=("Planet Mercury",)),
             OntologyEntry(id="HP:300", name="Fever"),
         ]
         embedder = MockOntologyEmbedder()
@@ -203,9 +198,7 @@ class TestHomonymDisambiguation:
     async def test_same_entry_synonym_not_homonym(self) -> None:
         """Entry where name matches another text from same entry is not a homonym."""
         entries = [
-            OntologyEntry(
-                id="HP:001", name="seizure", synonyms=("Seizure", "Epileptic seizure")
-            ),
+            OntologyEntry(id="HP:001", name="seizure", synonyms=("Seizure", "Epileptic seizure")),
         ]
         embedder = MockOntologyEmbedder()
         index = OntologyIndex(entries, embedder)
@@ -219,12 +212,8 @@ class TestHomonymDisambiguation:
     async def test_disambiguated_texts_include_synonyms(self) -> None:
         """Disambiguated texts include synonym context."""
         entries = [
-            OntologyEntry(
-                id="HP:100", name="Cold", synonyms=("Common cold", "Rhinitis")
-            ),
-            OntologyEntry(
-                id="HP:200", name="Cold", synonyms=("Low temperature",)
-            ),
+            OntologyEntry(id="HP:100", name="Cold", synonyms=("Common cold", "Rhinitis")),
+            OntologyEntry(id="HP:200", name="Cold", synonyms=("Low temperature",)),
         ]
         embedder = MockOntologyEmbedder()
         index = OntologyIndex(entries, embedder)

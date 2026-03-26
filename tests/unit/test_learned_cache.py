@@ -190,9 +190,7 @@ class TestLearnedDictionaryCache:
 
     def test_version_mismatch_returns_none(self, tmp_path: Path) -> None:
         cache_path = tmp_path / "cache.json"
-        cache_path.write_text(
-            json.dumps({"version": 999, "field_mappings": {}}), encoding="utf-8"
-        )
+        cache_path.write_text(json.dumps({"version": 999, "field_mappings": {}}), encoding="utf-8")
 
         cache = LearnedDictionaryCache(path=str(cache_path))
         assert cache.load_dictionary("field") is None

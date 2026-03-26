@@ -54,8 +54,7 @@ class DictionaryNormalization(BaseModel):
                 per_value[v] = {"confidence": 0.0}
             else:
                 raise NormalizationError(
-                    f"Value '{v}' not found in dictionary "
-                    f"for field '{context_field}'"
+                    f"Value '{v}' not found in dictionary for field '{context_field}'"
                 )
 
         clusters: dict[str, list[str]] = {}
@@ -63,8 +62,7 @@ class DictionaryNormalization(BaseModel):
             clusters.setdefault(canonical, []).append(raw)
 
         logger.info(
-            "DictionaryNormalization: mapped %d unique values "
-            "to %d canonicals for field '%s'",
+            "DictionaryNormalization: mapped %d unique values to %d canonicals for field '%s'",
             len(result_mapping),
             len(clusters),
             context_field,
@@ -87,6 +85,4 @@ class DictionaryNormalization(BaseModel):
         **kwargs: Any,
     ) -> NormalizationResult:
         """Synchronous wrapper."""
-        return run_sync(
-            self.anormalize(values, context_field=context_field, **kwargs)
-        )
+        return run_sync(self.anormalize(values, context_field=context_field, **kwargs))

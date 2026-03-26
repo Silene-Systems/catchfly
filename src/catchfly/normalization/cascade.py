@@ -58,9 +58,8 @@ class CascadeNormalization(BaseModel):
         if not values:
             return NormalizationResult(mapping={}, clusters=None, metadata={})
 
-        if (
-            self.confidence_thresholds is not None
-            and len(self.confidence_thresholds) != len(self.steps)
+        if self.confidence_thresholds is not None and len(self.confidence_thresholds) != len(
+            self.steps
         ):
             raise ValueError(
                 f"confidence_thresholds length ({len(self.confidence_thresholds)}) "
@@ -88,9 +87,7 @@ class CascadeNormalization(BaseModel):
                 len(remaining),
             )
 
-            result = await step.anormalize(
-                remaining, context_field=context_field, **kwargs
-            )
+            result = await step.anormalize(remaining, context_field=context_field, **kwargs)
 
             # Route: confidence-based or identity-check
             newly_mapped: dict[str, str] = {}
@@ -143,8 +140,7 @@ class CascadeNormalization(BaseModel):
             clusters.setdefault(canonical, []).append(raw)
 
         logger.info(
-            "CascadeNormalization: %d unique values → %d groups "
-            "across %d steps for field '%s'",
+            "CascadeNormalization: %d unique values → %d groups across %d steps for field '%s'",
             len(unique_values),
             len(clusters),
             len(self.steps),
@@ -169,9 +165,7 @@ class CascadeNormalization(BaseModel):
         **kwargs: Any,
     ) -> NormalizationResult:
         """Synchronous wrapper."""
-        return run_sync(
-            self.anormalize(values, context_field=context_field, **kwargs)
-        )
+        return run_sync(self.anormalize(values, context_field=context_field, **kwargs))
 
     @classmethod
     def default(

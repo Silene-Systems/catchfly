@@ -113,9 +113,7 @@ class LLMDirectExtraction(BaseModel):
         if isinstance(schema, dict):
             from catchfly.schema.converters import json_schema_to_pydantic
 
-            schema = json_schema_to_pydantic(
-                schema, name=schema.get("title", "Extraction")
-            )
+            schema = json_schema_to_pydantic(schema, name=schema.get("title", "Extraction"))
 
         json_schema = schema.model_json_schema()
         client = self._get_client()
@@ -127,9 +125,7 @@ class LLMDirectExtraction(BaseModel):
                 all_chunks.extend(self.chunking_strategy.chunk(doc))
         else:
             for doc in documents:
-                all_chunks.extend(
-                    chunk_document(doc, self.chunk_size, self.chunk_overlap)
-                )
+                all_chunks.extend(chunk_document(doc, self.chunk_size, self.chunk_overlap))
 
         logger.info(
             "LLMDirectExtraction: processing %d documents (%d chunks), model=%s",
@@ -268,9 +264,7 @@ class LLMDirectExtraction(BaseModel):
         return data
 
     @staticmethod
-    def _coerce_nulls(
-        data: dict[str, Any], json_schema: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _coerce_nulls(data: dict[str, Any], json_schema: dict[str, Any]) -> dict[str, Any]:
         """Replace null values with schema-appropriate defaults.
 
         LLMs commonly return ``null`` for empty arrays/objects instead of

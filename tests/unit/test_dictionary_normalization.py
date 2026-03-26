@@ -10,9 +10,7 @@ from catchfly.normalization.dictionary import DictionaryNormalization
 
 class TestDictionaryNormalization:
     async def test_exact_match(self) -> None:
-        norm = DictionaryNormalization(
-            mapping={"NYC": "New York", "LA": "Los Angeles"}
-        )
+        norm = DictionaryNormalization(mapping={"NYC": "New York", "LA": "Los Angeles"})
         result = await norm.anormalize(["NYC", "LA"], context_field="city")
         assert result.mapping["NYC"] == "New York"
         assert result.mapping["LA"] == "Los Angeles"
@@ -47,9 +45,7 @@ class TestDictionaryNormalization:
         assert result.mapping == {}
 
     def test_sync_wrapper(self) -> None:
-        norm = DictionaryNormalization(
-            mapping={"NYC": "New York", "LA": "Los Angeles"}
-        )
+        norm = DictionaryNormalization(mapping={"NYC": "New York", "LA": "Los Angeles"})
         result = norm.normalize(["NYC", "LA"], context_field="city")
         assert result.mapping["NYC"] == "New York"
 
@@ -57,17 +53,13 @@ class TestDictionaryNormalization:
         norm = DictionaryNormalization(
             mapping={"NYC": "New York", "NY": "New York", "LA": "Los Angeles"}
         )
-        result = await norm.anormalize(
-            ["NYC", "NY", "LA"], context_field="city"
-        )
+        result = await norm.anormalize(["NYC", "NY", "LA"], context_field="city")
         assert "New York" in result.clusters
         assert set(result.clusters["New York"]) == {"NYC", "NY"}
         assert result.clusters["Los Angeles"] == ["LA"]
 
     async def test_explain(self) -> None:
-        norm = DictionaryNormalization(
-            mapping={"NYC": "New York", "NY": "New York"}
-        )
+        norm = DictionaryNormalization(mapping={"NYC": "New York", "NY": "New York"})
         result = await norm.anormalize(["NYC", "NY"], context_field="city")
         explanation = result.explain("NYC")
         assert "New York" in explanation

@@ -84,9 +84,7 @@ class TestResolveProvider:
         assert key == "my-key"
 
     def test_explicit_overrides(self) -> None:
-        model, url, key = _resolve_provider(
-            "anthropic/claude-3", "http://proxy", "explicit-key"
-        )
+        model, url, key = _resolve_provider("anthropic/claude-3", "http://proxy", "explicit-key")
         assert model == "claude-3"
         assert url == "http://proxy"
         assert key == "explicit-key"

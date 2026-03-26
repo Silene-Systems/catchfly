@@ -145,10 +145,7 @@ class TestBuildUserPrompt:
     """Tests for prompt construction with max_fields and suggested_fields."""
 
     def _make_docs(self, n: int = 2) -> list[Document]:
-        return [
-            Document(content=f"Document {i} about something", id=f"doc{i}")
-            for i in range(n)
-        ]
+        return [Document(content=f"Document {i} about something", id=f"doc{i}") for i in range(n)]
 
     def test_basic_prompt(self) -> None:
         from catchfly.discovery.single_pass import _build_user_prompt
