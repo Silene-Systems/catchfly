@@ -42,7 +42,7 @@ class TestOntologyIndex:
     async def test_build_expands_synonyms(self) -> None:
         entries = _make_entries()
         embedder = MockOntologyEmbedder()
-        index = OntologyIndex(entries, embedder)  # type: ignore[arg-type]
+        index = OntologyIndex(entries, embedder)
         await index.build()
 
         # 3 entries: "Seizure" + 2 synonyms, "Ataxia" + 1 synonym, "Fever" = 6 texts
@@ -61,7 +61,7 @@ class TestOntologyIndex:
             "Fever": [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         }
         embedder = MockOntologyEmbedder(overrides=overrides)
-        index = OntologyIndex(entries, embedder)  # type: ignore[arg-type]
+        index = OntologyIndex(entries, embedder)
         await index.build()
 
         query = [[1.0, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]  # close to Seizure
@@ -83,7 +83,7 @@ class TestOntologyIndex:
         }
         embedder = MockOntologyEmbedder(overrides=overrides)
         entries = _make_entries()
-        index = OntologyIndex(entries, embedder)  # type: ignore[arg-type]
+        index = OntologyIndex(entries, embedder)
         await index.build()
 
         query = [[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]
@@ -96,7 +96,7 @@ class TestOntologyIndex:
 
     async def test_empty_entries(self) -> None:
         embedder = MockOntologyEmbedder()
-        index = OntologyIndex([], embedder)  # type: ignore[arg-type]
+        index = OntologyIndex([], embedder)
         await index.build()
         results = index.search([[0.5] * 8], top_k=3)
         assert results == [[]]
@@ -107,12 +107,12 @@ class TestOntologyIndex:
         cache_path = tmp_path / "cache.json"
 
         # Build and save
-        index1 = OntologyIndex(entries, embedder, cache_path=cache_path)  # type: ignore[arg-type]
+        index1 = OntologyIndex(entries, embedder, cache_path=cache_path)
         await index1.build()
         assert cache_path.exists()
 
         # Load from cache
-        index2 = OntologyIndex(entries, embedder, cache_path=cache_path)  # type: ignore[arg-type]
+        index2 = OntologyIndex(entries, embedder, cache_path=cache_path)
         await index2.build()
 
         # Same results
@@ -128,24 +128,128 @@ class TestOntologyIndex:
 
         embedder1 = MockOntologyEmbedder()
         embedder1.model = "model-a"
-        index1 = OntologyIndex(entries, embedder1, cache_path=cache_path)  # type: ignore[arg-type]
+        index1 = OntologyIndex(entries, embedder1, cache_path=cache_path)
         await index1.build()
 
         # Different model — should rebuild, not use cache
         embedder2 = MockOntologyEmbedder()
         embedder2.model = "model-b"
-        index2 = OntologyIndex(entries, embedder2, cache_path=cache_path)  # type: ignore[arg-type]
+        index2 = OntologyIndex(entries, embedder2, cache_path=cache_path)
         await index2.build()
 
         # Cache should now reflect model-b
         cache_data = json.loads(cache_path.read_text())
         assert cache_data["model"] == "model-b"
 
+    async def test_cache_works_with_client_without_model_attr(self, tmp_path: Path) -> None:
+        """Client without .model attribute uses 'unknown' in cache metadata."""
+
+        class BareEmbedder:
+            async def aembed(self, texts: list[str]) -> list[list[float]]:
+                h = 42
+                return [
+                    [((hash(t) + i) & 0xF) / 15.0 for i in range(8)] for t in texts
+                ]
+
+        entries = _make_entries()
+        cache_path = tmp_path / "cache.json"
+        embedder = BareEmbedder()
+        index = OntologyIndex(entries, embedder, cache_path=cache_path)
+        await index.build()
+
+        assert cache_path.exists()
+        cache_data = json.loads(cache_path.read_text())
+        assert cache_data["model"] == "unknown"
+
+class TestHomonymDisambiguation:
+    """Tests for homonym detection and disambiguation in OntologyIndex."""
+
+    async def test_homonym_detection(self) -> None:
+        """Entries with same name but different IDs get disambiguated."""
+        entries = [
+            OntologyEntry(
+                id="HP:100", name="Mercury", synonyms=("Hg", "Quicksilver")
+            ),
+            OntologyEntry(
+                id="HP:200", name="Mercury", synonyms=("Planet Mercury",)
+            ),
+            OntologyEntry(id="HP:300", name="Fever"),
+        ]
+        embedder = MockOntologyEmbedder()
+        index = OntologyIndex(entries, embedder)
+        await index.build()
+
+        # The two "Mercury" texts should be disambiguated
+        mercury_texts = [t for t in index._texts if t.startswith("Mercury")]
+        assert len(mercury_texts) == 2
+        # Each should have context appended
+        for t in mercury_texts:
+            assert "(" in t  # disambiguation context added
+            assert "[HP:" in t  # ID included
+
+        # "Fever" should be unchanged
+        assert "Fever" in index._texts
+
+    async def test_no_disambiguation_unique_names(self) -> None:
+        """Entries with distinct names are not modified."""
+        entries = _make_entries()  # Seizure, Ataxia, Fever — all unique
+        embedder = MockOntologyEmbedder()
+        index = OntologyIndex(entries, embedder)
+        await index.build()
+
+        # No text should have disambiguation context
+        for t in index._texts:
+            assert "also known as:" not in t
+
+    async def test_same_entry_synonym_not_homonym(self) -> None:
+        """Entry where name matches another text from same entry is not a homonym."""
+        entries = [
+            OntologyEntry(
+                id="HP:001", name="seizure", synonyms=("Seizure", "Epileptic seizure")
+            ),
+        ]
+        embedder = MockOntologyEmbedder()
+        index = OntologyIndex(entries, embedder)
+        await index.build()
+
+        # "seizure" and "Seizure" match case-insensitively but same entry ID
+        # No disambiguation should happen
+        for t in index._texts:
+            assert "[HP:" not in t
+
+    async def test_disambiguated_texts_include_synonyms(self) -> None:
+        """Disambiguated texts include synonym context."""
+        entries = [
+            OntologyEntry(
+                id="HP:100", name="Cold", synonyms=("Common cold", "Rhinitis")
+            ),
+            OntologyEntry(
+                id="HP:200", name="Cold", synonyms=("Low temperature",)
+            ),
+        ]
+        embedder = MockOntologyEmbedder()
+        index = OntologyIndex(entries, embedder)
+        await index.build()
+
+        cold_texts = [t for t in index._texts if t.startswith("Cold")]
+        assert len(cold_texts) == 2
+
+        # HP:100's Cold should mention "Common cold, Rhinitis"
+        hp100_text = [t for t in cold_texts if "HP:100" in t]
+        assert len(hp100_text) == 1
+        assert "Common cold" in hp100_text[0]
+
+        # HP:200's Cold should mention "Low temperature"
+        hp200_text = [t for t in cold_texts if "HP:200" in t]
+        assert len(hp200_text) == 1
+        assert "Low temperature" in hp200_text[0]
+
+
+class TestOntologyIndexMisc:
     async def test_build_must_be_called_before_search(self) -> None:
         entries = _make_entries()
         embedder = MockOntologyEmbedder()
-        index = OntologyIndex(entries, embedder)  # type: ignore[arg-type]
-
+        index = OntologyIndex(entries, embedder)
         import pytest
 
         with pytest.raises(RuntimeError, match="build"):

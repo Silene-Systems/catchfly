@@ -8,7 +8,6 @@ from pathlib import Path  # noqa: TC003
 from typing import Any
 
 from catchfly.ontology.types import OntologyEntry  # noqa: TC001
-from catchfly.providers.embeddings import OpenAIEmbeddingClient  # noqa: TC001
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +24,9 @@ def _import_numpy() -> Any:
         ) from e
 
 
-_CACHE_VERSION = 1
+_CACHE_VERSION = 2
+"""Bumped from 1 → 2 in v1.1 to account for homonym disambiguation
+changing index text content. Old caches auto-rebuild on version mismatch."""
 
 
 class OntologyIndex:
@@ -39,7 +40,7 @@ class OntologyIndex:
     def __init__(
         self,
         entries: list[OntologyEntry],
-        embedding_client: OpenAIEmbeddingClient,
+        embedding_client: Any,
         cache_path: Path | None = None,
     ) -> None:
         self.entries = entries
@@ -67,6 +68,9 @@ class OntologyIndex:
             self._norms = np.ones((0, 1), dtype=np.float32)
             self._built = True
             return
+
+        # Disambiguate homonymous terms before embedding
+        self._disambiguate_homonyms()
 
         # Try loading from cache
         if self._cache_path and self._load_cache(np):
@@ -135,6 +139,56 @@ class OntologyIndex:
         return results
 
     # ------------------------------------------------------------------
+    # Homonym disambiguation
+    # ------------------------------------------------------------------
+
+    def _disambiguate_homonyms(self) -> None:
+        """Detect entries with identical names but different IDs.
+
+        For homonymous entries, appends disambiguating context (synonyms
+        and ontology ID) to the index text so the embedding model can
+        distinguish them.  Non-homonymous entries are left unchanged.
+
+        Lightweight: only modifies ``self._texts`` in-place, no extra
+        LLM or embedding calls.
+        """
+        from collections import defaultdict
+
+        # Group text indices by lowercased text
+        name_to_indices: dict[str, list[int]] = defaultdict(list)
+        for i, text in enumerate(self._texts):
+            name_to_indices[text.lower()].append(i)
+
+        n_disambiguated = 0
+        for indices in name_to_indices.values():
+            if len(indices) <= 1:
+                continue
+
+            # Check if they refer to different ontology entries
+            entry_ids = {self._text_to_entry[i].id for i in indices}
+            if len(entry_ids) <= 1:
+                continue  # same entry matched via name + synonym
+
+            # Disambiguate: append synonyms and ID to the text
+            for i in indices:
+                entry = self._text_to_entry[i]
+                context_parts: list[str] = []
+                if entry.synonyms:
+                    context_parts.append(
+                        f"also known as: {', '.join(entry.synonyms[:3])}"
+                    )
+                context_parts.append(f"[{entry.id}]")
+                self._texts[i] = f"{self._texts[i]} ({'; '.join(context_parts)})"
+
+            n_disambiguated += len(indices)
+
+        if n_disambiguated:
+            logger.info(
+                "OntologyIndex: disambiguated %d homonymous index texts",
+                n_disambiguated,
+            )
+
+    # ------------------------------------------------------------------
     # Cache
     # ------------------------------------------------------------------
 
@@ -143,7 +197,7 @@ class OntologyIndex:
             raise ValueError("Cannot save cache: cache_path is not set")
         data = {
             "version": _CACHE_VERSION,
-            "model": self._embedding_client.model,
+            "model": getattr(self._embedding_client, "model", "unknown"),
             "n_texts": len(self._texts),
             "embeddings": self._embedding_matrix.tolist(),
         }
@@ -167,7 +221,7 @@ class OntologyIndex:
 
         if data.get("version") != _CACHE_VERSION:
             return False
-        if data.get("model") != self._embedding_client.model:
+        if data.get("model") != getattr(self._embedding_client, "model", "unknown"):
             logger.info("OntologyIndex: model changed, rebuilding cache")
             return False
         if data.get("n_texts") != len(self._texts):

@@ -43,12 +43,15 @@ class DictionaryNormalization(BaseModel):
             lookup = {k.lower(): v for k, v in self.mapping.items()}
 
         result_mapping: dict[str, str] = {}
+        per_value: dict[str, dict[str, Any]] = {}
         for v in set(values):
             key = v.lower() if self.case_insensitive else v
             if key in lookup:
                 result_mapping[v] = lookup[key]
+                per_value[v] = {"confidence": 1.0}
             elif self.passthrough_unmapped:
                 result_mapping[v] = v
+                per_value[v] = {"confidence": 0.0}
             else:
                 raise NormalizationError(
                     f"Value '{v}' not found in dictionary "
@@ -70,7 +73,11 @@ class DictionaryNormalization(BaseModel):
         return NormalizationResult(
             mapping=result_mapping,
             clusters=clusters,
-            metadata={"strategy": "dictionary", "field": context_field},
+            metadata={
+                "strategy": "dictionary",
+                "field": context_field,
+                "per_value": per_value,
+            },
         )
 
     def normalize(

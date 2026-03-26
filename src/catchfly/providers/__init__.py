@@ -1,6 +1,10 @@
 """LLM and embedding provider abstractions."""
 
-from catchfly.providers.embeddings import EmbeddingClient, OpenAIEmbeddingClient
+from catchfly.providers.embeddings import (
+    EmbeddingClient,
+    OpenAIEmbeddingClient,
+    SentenceTransformerEmbeddingClient,
+)
 from catchfly.providers.llm import LLMClient, LLMResponse, OpenAICompatibleClient
 
 __all__ = [
@@ -9,6 +13,7 @@ __all__ = [
     "LLMResponse",
     "OpenAICompatibleClient",
     "OpenAIEmbeddingClient",
+    "SentenceTransformerEmbeddingClient",
 ]
 
 

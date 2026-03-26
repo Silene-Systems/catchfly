@@ -38,6 +38,16 @@ Rules:
 """
 
 
+_AUGMENT_SYSTEM = """\
+You are a biomedical terminology assistant. For each input term, \
+generate {n} alternative phrasings that might appear in medical ontologies.
+
+Include formal medical terms, common abbreviations, lay terms, and synonyms. \
+Do NOT include the original term. Output ONLY valid JSON:
+{{"phrasings": {{"<term1>": ["alt1", "alt2", ...], "<term2>": ["alt1", ...]}}}}\
+"""
+
+
 @dataclass
 class _OntologyMatch:
     """Internal: result of matching a value to an ontology entry."""
@@ -73,6 +83,18 @@ class OntologyMapping(BaseModel):
     cache_dir: str | None = None
     base_url: str | None = None
     api_key: str | None = None
+
+    augment_queries: bool = False
+    """When True, generate alternative phrasings per value via LLM before
+    embedding search. Improves recall by +10-20pp on biomedical benchmarks
+    (LLMAEL/GRF, ACL 2025).  Requires an extra LLM call per batch."""
+    augmentation_skip_threshold: float = 0.95
+    """Skip augmentation for values whose top-1 NN score exceeds this
+    threshold (already high-confidence, no need for extra phrasings)."""
+    augmentation_n_phrasings: int = 5
+    """Number of alternative phrasings to generate per value."""
+    augmentation_batch_size: int = 30
+    """Number of values to augment per LLM call."""
 
     client: Any | None = None
     """Pre-configured LLM client for reranking."""
@@ -147,6 +169,18 @@ class OntologyMapping(BaseModel):
 
         # 4. Nearest-neighbor search
         nn_results = index.search(query_embeddings, top_k=self.top_k)
+
+        # 4b. RAG augmentation: generate phrasings, search, merge
+        if self.augment_queries and self.reranking_model:
+            llm_client_for_augment = self._get_client()
+            nn_results = await self._augment_and_merge(
+                llm_client_for_augment,
+                embed_client,
+                index,
+                unique_values,
+                nn_results,
+                context_field,
+            )
 
         # 5. LLM reranking (optional)
         if self.reranking_model:
@@ -351,6 +385,135 @@ class OntologyMapping(BaseModel):
                 rationale=rationale or "LLM found no match",
             )
         return None
+
+    # ------------------------------------------------------------------
+    # RAG augmentation
+    # ------------------------------------------------------------------
+
+    async def _augment_and_merge(
+        self,
+        client: Any,
+        embed_client: Any,
+        index: OntologyIndex,
+        values: list[str],
+        nn_results: list[list[tuple[OntologyEntry, float]]],
+        context_field: str,
+    ) -> list[list[tuple[OntologyEntry, float]]]:
+        """Generate phrasings for low-confidence values, search, merge."""
+        # Identify values needing augmentation
+        to_augment: list[str] = []
+        augment_indices: list[int] = []
+        for i, (value, candidates) in enumerate(
+            zip(values, nn_results, strict=True)
+        ):
+            top_score = candidates[0][1] if candidates else 0.0
+            if top_score < self.augmentation_skip_threshold:
+                to_augment.append(value)
+                augment_indices.append(i)
+
+        if not to_augment:
+            logger.debug("OntologyMapping: all values above skip threshold, no augmentation")
+            return nn_results
+
+        logger.info(
+            "OntologyMapping: augmenting %d/%d values for '%s'",
+            len(to_augment),
+            len(values),
+            context_field,
+        )
+
+        # Generate phrasings via LLM
+        phrasings_per_value = await self._generate_phrasings(
+            client, to_augment, context_field
+        )
+
+        # Flatten phrasings and embed them
+        flat_phrasings: list[str] = []
+        phrasing_to_value_idx: list[int] = []
+        for local_idx, phrases in enumerate(phrasings_per_value):
+            for p in phrases:
+                flat_phrasings.append(p)
+                phrasing_to_value_idx.append(local_idx)
+
+        if not flat_phrasings:
+            return nn_results
+
+        phrasing_embeddings = await embed_client.aembed(flat_phrasings)
+        phrasing_nn = index.search(phrasing_embeddings, top_k=self.top_k)
+
+        # Merge phrasing results into original nn_results
+        merged = [list(r) for r in nn_results]
+        for flat_idx, local_idx in enumerate(phrasing_to_value_idx):
+            global_idx = augment_indices[local_idx]
+            merged[global_idx] = self._merge_candidates(
+                merged[global_idx], phrasing_nn[flat_idx], self.top_k
+            )
+
+        return merged
+
+    async def _generate_phrasings(
+        self,
+        client: Any,
+        values: list[str],
+        context_field: str,
+    ) -> list[list[str]]:
+        """Generate alternative phrasings in batches via LLM."""
+        all_phrasings: list[list[str]] = [[] for _ in values]
+        value_to_idx = {v: i for i, v in enumerate(values)}
+
+        system_prompt = _AUGMENT_SYSTEM.format(n=self.augmentation_n_phrasings)
+
+        for batch_start in range(0, len(values), self.augmentation_batch_size):
+            batch = values[batch_start : batch_start + self.augmentation_batch_size]
+            user_prompt = (
+                f'Field: "{context_field}"\n'
+                f"Terms to rephrase:\n"
+                + "\n".join(f"  - {v}" for v in batch)
+            )
+
+            try:
+                response = await client.acomplete(
+                    [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.3,
+                )
+                text = strip_markdown_fences(response.content)
+                data = json.loads(text)
+                phrasings_dict = data.get("phrasings", {})
+
+                for term, phrases in phrasings_dict.items():
+                    if term in value_to_idx and isinstance(phrases, list):
+                        all_phrasings[value_to_idx[term]] = [
+                            str(p) for p in phrases[: self.augmentation_n_phrasings]
+                        ]
+            except (ProviderError, json.JSONDecodeError, ValueError, KeyError) as e:
+                logger.warning(
+                    "OntologyMapping: augmentation failed for batch at %d: %s",
+                    batch_start,
+                    e,
+                )
+                # Graceful fallback: no phrasings for this batch
+
+        return all_phrasings
+
+    @staticmethod
+    def _merge_candidates(
+        original: list[tuple[OntologyEntry, float]],
+        extra: list[tuple[OntologyEntry, float]],
+        top_k: int,
+    ) -> list[tuple[OntologyEntry, float]]:
+        """Merge two candidate lists, dedup by entry ID, keep top-k by score."""
+        seen: dict[str, tuple[OntologyEntry, float]] = {}
+        for entry, score in original:
+            if entry.id not in seen or score > seen[entry.id][1]:
+                seen[entry.id] = (entry, score)
+        for entry, score in extra:
+            if entry.id not in seen or score > seen[entry.id][1]:
+                seen[entry.id] = (entry, score)
+        merged = sorted(seen.values(), key=lambda x: x[1], reverse=True)
+        return merged[:top_k]
 
     # ------------------------------------------------------------------
     # Result building

@@ -71,3 +71,12 @@ class TestDictionaryNormalization:
         result = await norm.anormalize(["NYC", "NY"], context_field="city")
         explanation = result.explain("NYC")
         assert "New York" in explanation
+
+    async def test_per_value_confidence_metadata(self) -> None:
+        """Matched values get confidence 1.0, passthrough gets 0.0."""
+        norm = DictionaryNormalization(mapping={"NYC": "New York"})
+        result = await norm.anormalize(["NYC", "Chicago"], context_field="city")
+
+        per_value = result.metadata["per_value"]
+        assert per_value["NYC"]["confidence"] == 1.0
+        assert per_value["Chicago"]["confidence"] == 0.0

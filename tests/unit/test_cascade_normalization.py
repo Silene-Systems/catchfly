@@ -265,3 +265,235 @@ class TestCascadeNormalization:
         )
         await cascade.anormalize(["a", "b"])
         assert len(calls) == 0  # second step never called
+
+
+# ---------------------------------------------------------------------------
+# Confidence-based routing
+# ---------------------------------------------------------------------------
+
+
+class MockConfidenceStrategy:
+    """Mock strategy that returns configurable confidence scores."""
+
+    def __init__(self, mappings: dict[str, tuple[str, float]]) -> None:
+        """mappings: {raw: (canonical, confidence)}"""
+        self._mappings = mappings
+
+    async def anormalize(
+        self,
+        values: list[str],
+        context_field: str = "",
+        **kwargs: Any,
+    ) -> NormalizationResult:
+        mapping: dict[str, str] = {}
+        per_value: dict[str, dict[str, Any]] = {}
+        for v in set(values):
+            if v in self._mappings:
+                canonical, conf = self._mappings[v]
+                mapping[v] = canonical
+                per_value[v] = {"confidence": conf}
+            else:
+                mapping[v] = v
+                per_value[v] = {"confidence": 0.0}
+        return NormalizationResult(
+            mapping=mapping,
+            metadata={"per_value": per_value},
+        )
+
+    def normalize(
+        self,
+        values: list[str],
+        context_field: str = "",
+        **kwargs: Any,
+    ) -> NormalizationResult:
+        from catchfly._compat import run_sync
+
+        return run_sync(self.anormalize(values, context_field=context_field, **kwargs))
+
+
+class TestConfidenceBasedRouting:
+    async def test_low_confidence_flows_through(self) -> None:
+        """Value mapped with low confidence continues to next step."""
+        step1 = MockConfidenceStrategy({"x": ("X_weak", 0.5)})
+        step2 = MockConfidenceStrategy({"x": ("X_strong", 0.95)})
+
+        cascade = CascadeNormalization(
+            steps=[step1, step2],
+            confidence_thresholds=[0.9, 0.9],
+        )
+        result = await cascade.anormalize(["x"])
+        # step1 maps x→X_weak at 0.5 (below 0.9) → flows to step2
+        # step2 maps x→X_strong at 0.95 (above 0.9) → accepted
+        assert result.mapping["x"] == "X_strong"
+
+    async def test_high_confidence_stops(self) -> None:
+        """Value mapped with high confidence does NOT flow to next step."""
+        step1 = MockConfidenceStrategy({"x": ("X_good", 0.95)})
+        calls: list[str] = []
+
+        class TrackingStep:
+            async def anormalize(self, values: list[str], **kw: Any) -> NormalizationResult:
+                calls.append("called")
+                return NormalizationResult(mapping={v: v for v in values})
+
+        cascade = CascadeNormalization(
+            steps=[step1, TrackingStep()],
+            confidence_thresholds=[0.9, 0.9],
+        )
+        result = await cascade.anormalize(["x"])
+        assert result.mapping["x"] == "X_good"
+        assert len(calls) == 0  # step2 never called for x
+
+    async def test_no_thresholds_uses_identity_check(self) -> None:
+        """Without thresholds, any non-identity mapping is accepted (backward compat)."""
+        step1 = MockConfidenceStrategy({"x": ("X_weak", 0.1)})
+        calls: list[str] = []
+
+        class TrackingStep:
+            async def anormalize(self, values: list[str], **kw: Any) -> NormalizationResult:
+                calls.append("called")
+                return NormalizationResult(mapping={v: v for v in values})
+
+        cascade = CascadeNormalization(
+            steps=[step1, TrackingStep()],
+            confidence_thresholds=None,
+        )
+        result = await cascade.anormalize(["x"])
+        # With no thresholds, x→X_weak is accepted (non-identity)
+        assert result.mapping["x"] == "X_weak"
+        assert len(calls) == 0
+
+    async def test_threshold_length_mismatch_raises(self) -> None:
+        """Mismatched threshold/steps lengths raises ValueError."""
+        import pytest
+
+        cascade = CascadeNormalization(
+            steps=[MockConfidenceStrategy({})],
+            confidence_thresholds=[0.9, 0.8],  # 2 thresholds, 1 step
+        )
+        with pytest.raises(ValueError, match="confidence_thresholds length"):
+            await cascade.anormalize(["x"])
+
+    async def test_missing_per_value_defaults_to_zero(self) -> None:
+        """Strategy without per_value metadata → confidence defaults to 0.0."""
+
+        class NoConfidenceStrategy:
+            async def anormalize(self, values: list[str], **kw: Any) -> NormalizationResult:
+                return NormalizationResult(
+                    mapping={v: f"mapped_{v}" for v in values},
+                    metadata={},  # no per_value
+                )
+
+        step1 = NoConfidenceStrategy()
+        step2 = MockConfidenceStrategy({"x": ("X_real", 0.95)})
+
+        cascade = CascadeNormalization(
+            steps=[step1, step2],
+            confidence_thresholds=[0.5, 0.5],
+        )
+        result = await cascade.anormalize(["x"])
+        # step1 maps x but has no per_value → confidence 0.0 < 0.5 → flows
+        # step2 maps x with confidence 0.95 → accepted
+        assert result.mapping["x"] == "X_real"
+
+    async def test_default_factory_with_confidence(self) -> None:
+        """default(use_confidence=True) sets sensible thresholds."""
+        cascade = CascadeNormalization.default(
+            dictionary={"a": "A"},
+            model="gpt-test",
+            use_confidence=True,
+        )
+        assert cascade.confidence_thresholds is not None
+        assert len(cascade.confidence_thresholds) == 2  # dict + llm
+        assert cascade.confidence_thresholds[0] == 1.0  # dictionary
+        assert cascade.confidence_thresholds[1] == 0.80  # llm
+
+    async def test_default_factory_without_confidence(self) -> None:
+        """default() without use_confidence keeps thresholds None."""
+        cascade = CascadeNormalization.default(model="gpt-test")
+        assert cascade.confidence_thresholds is None
+
+
+# ---------------------------------------------------------------------------
+# CascadeNormalization.learn()
+# ---------------------------------------------------------------------------
+
+
+class TestCascadeLearn:
+    async def test_learn_prepends_dictionary(self) -> None:
+        """learn() prepends a DictionaryNormalization step."""
+        cascade = CascadeNormalization(
+            steps=[MockPassthroughStrategy(known={})]
+        )
+        assert len(cascade.steps) == 1
+
+        result = NormalizationResult(
+            mapping={"a": "A", "b": "b"},
+            metadata={"per_value": {"a": {"confidence": 0.95}, "b": {"confidence": 0.0}}},
+        )
+        cascade.learn(result)
+
+        assert len(cascade.steps) == 2
+        assert type(cascade.steps[0]).__name__ == "DictionaryNormalization"
+        assert cascade.steps[0].mapping["a"] == "A"
+
+    async def test_learn_merges_into_existing_dictionary(self) -> None:
+        """learn() merges into existing DictionaryNormalization at position 0."""
+        cascade = CascadeNormalization(
+            steps=[
+                DictionaryNormalization(
+                    mapping={"x": "X"},
+                    case_insensitive=True,
+                    passthrough_unmapped=True,
+                )
+            ]
+        )
+
+        result = NormalizationResult(
+            mapping={"a": "A"},
+            metadata={"per_value": {"a": {"confidence": 0.95}}},
+        )
+        cascade.learn(result)
+
+        # Still 1 step, but mapping has both entries
+        assert len(cascade.steps) == 1
+        assert cascade.steps[0].mapping["x"] == "X"
+        assert cascade.steps[0].mapping["a"] == "A"
+
+    async def test_learn_empty_result_no_change(self) -> None:
+        """learn() with no mappings does not modify steps."""
+        cascade = CascadeNormalization(
+            steps=[MockPassthroughStrategy(known={})]
+        )
+        result = NormalizationResult(mapping={"a": "a"})  # identity only
+        cascade.learn(result)
+        assert len(cascade.steps) == 1
+
+    async def test_learn_respects_min_confidence(self) -> None:
+        """learn() filters by min_confidence."""
+        cascade = CascadeNormalization(
+            steps=[MockPassthroughStrategy(known={})]
+        )
+        result = NormalizationResult(
+            mapping={"a": "A", "b": "B"},
+            metadata={"per_value": {"a": {"confidence": 0.95}, "b": {"confidence": 0.5}}},
+        )
+        cascade.learn(result, min_confidence=0.8)
+
+        assert len(cascade.steps) == 2
+        assert "a" in cascade.steps[0].mapping
+        assert "b" not in cascade.steps[0].mapping
+
+    async def test_learn_syncs_confidence_thresholds(self) -> None:
+        """learn() inserts 1.0 threshold when confidence_thresholds is set."""
+        cascade = CascadeNormalization(
+            steps=[MockPassthroughStrategy(known={})],
+            confidence_thresholds=[0.8],
+        )
+        result = NormalizationResult(
+            mapping={"a": "A"},
+            metadata={"per_value": {"a": {"confidence": 0.95}}},
+        )
+        cascade.learn(result)
+
+        assert cascade.confidence_thresholds == [1.0, 0.8]

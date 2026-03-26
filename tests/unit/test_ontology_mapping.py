@@ -296,3 +296,142 @@ class TestParseRerankResponse:
         match = OntologyMapping._parse_rerank_response(content, self._lookup(), self._candidates())
         assert match is not None
         assert match.entry.id == "HP:002"
+
+
+# ---------------------------------------------------------------------------
+# RAG augmentation
+# ---------------------------------------------------------------------------
+
+
+class MockAugmentingLLM:
+    """Mock LLM that returns phrasings for augmentation AND reranking."""
+
+    def __init__(self, phrasings: dict[str, list[str]]) -> None:
+        self._phrasings = phrasings
+        self.call_count = 0
+
+    async def acomplete(self, messages: list[dict[str, str]], **kwargs: Any) -> LLMResponse:
+        self.call_count += 1
+        user_msg = messages[-1]["content"]
+
+        # Detect if this is an augmentation call or reranking call
+        if "Terms to rephrase" in user_msg:
+            data = {"phrasings": self._phrasings}
+        else:
+            # Reranking call — select first candidate
+            import re
+            match = re.search(r"\(([A-Z]+:\d+)\)", user_msg)
+            selected_id = match.group(1) if match else None
+            data = {
+                "selected_id": selected_id,
+                "confidence": 0.95,
+                "rationale": "best match",
+            }
+
+        return LLMResponse(
+            content=json.dumps(data), input_tokens=100, output_tokens=50
+        )
+
+
+class TestRAGAugmentation:
+    async def test_augment_queries_false_no_extra_calls(self) -> None:
+        """Default augment_queries=False makes no augmentation LLM calls."""
+        embedder = MockOntologyEmbedder(_VECTORS)
+        mock_llm = MockRerankingLLM()
+        normalizer = OntologyMapping(
+            ontology="hpo",
+            reranking_model="mock",
+            embedding_client=embedder,
+            client=mock_llm,
+            augment_queries=False,
+        )
+
+        with _patch_source():
+            result = await normalizer.anormalize(["seizures"], context_field="phenotype")
+
+        # Only 1 call for reranking, no augmentation
+        assert mock_llm.call_count == 1
+        assert result.mapping["seizures"] == "Seizure"
+
+    async def test_augment_queries_generates_phrasings(self) -> None:
+        """augment_queries=True generates phrasings and searches them."""
+        # Use a weak query vector so NN score is below skip threshold
+        vectors = dict(_VECTORS)
+        vectors["vague symptom"] = [0.5, 0.3, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0]
+        # Phrasing maps closer to Seizure
+        vectors["epileptic fits"] = [0.96, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+        embedder = MockOntologyEmbedder(vectors)
+        mock_llm = MockAugmentingLLM(
+            phrasings={"vague symptom": ["epileptic fits", "convulsions"]}
+        )
+        normalizer = OntologyMapping(
+            ontology="hpo",
+            reranking_model="mock",
+            embedding_client=embedder,
+            client=mock_llm,
+            augment_queries=True,
+            augmentation_skip_threshold=0.95,
+        )
+
+        with _patch_source():
+            result = await normalizer.anormalize(["vague symptom"], context_field="phenotype")
+
+        assert result.mapping["vague symptom"] == "Seizure"
+        # Should have augmentation call + reranking call
+        assert mock_llm.call_count >= 2
+
+    async def test_augment_skips_high_confidence(self) -> None:
+        """Values with top-1 NN score above threshold are NOT augmented."""
+        # Make "seizures" very close to "Seizure" (score ~0.99)
+        vectors = dict(_VECTORS)
+        vectors["seizures"] = [0.999, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+        embedder = MockOntologyEmbedder(vectors)
+        mock_llm = MockAugmentingLLM(phrasings={})
+        normalizer = OntologyMapping(
+            ontology="hpo",
+            reranking_model="mock",
+            embedding_client=embedder,
+            client=mock_llm,
+            augment_queries=True,
+            augmentation_skip_threshold=0.95,
+        )
+
+        with _patch_source():
+            result = await normalizer.anormalize(["seizures"], context_field="phenotype")
+
+        assert result.mapping["seizures"] == "Seizure"
+        # Only reranking call, no augmentation (score > 0.95)
+        assert mock_llm.call_count == 1
+
+    async def test_augment_no_reranking_model(self) -> None:
+        """augment_queries has no effect when reranking_model is None."""
+        embedder = MockOntologyEmbedder(_VECTORS)
+        normalizer = OntologyMapping(
+            ontology="hpo",
+            reranking_model=None,
+            embedding_client=embedder,
+            augment_queries=True,
+        )
+
+        with _patch_source():
+            result = await normalizer.anormalize(["seizures"], context_field="phenotype")
+
+        # Should still work, just no augmentation (needs LLM client)
+        assert result.mapping["seizures"] == "Seizure"
+
+    async def test_merge_candidates_deduplication(self) -> None:
+        """_merge_candidates deduplicates by entry ID, keeps highest score."""
+        e1 = OntologyEntry(id="HP:001", name="Seizure")
+        e2 = OntologyEntry(id="HP:002", name="Ataxia")
+
+        original = [(e1, 0.8), (e2, 0.5)]
+        extra = [(e1, 0.9), (e2, 0.4)]  # e1 higher, e2 lower
+
+        merged = OntologyMapping._merge_candidates(original, extra, top_k=3)
+        assert len(merged) == 2
+        assert merged[0][0].id == "HP:001"
+        assert merged[0][1] == 0.9  # kept higher score
+        assert merged[1][0].id == "HP:002"
+        assert merged[1][1] == 0.5  # kept higher score

@@ -74,6 +74,23 @@ class NormalizationResult:
     clusters: dict[str, list[str]] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def to_dictionary(self, *, min_confidence: float = 0.0) -> dict[str, str]:
+        """Export non-identity mappings as a plain dictionary.
+
+        Returns only entries where ``canonical != raw`` and the per-value
+        confidence (if available) meets *min_confidence*.  Useful for
+        building a :class:`DictionaryNormalization` from results.
+        """
+        per_value = self.metadata.get("per_value", {})
+        result: dict[str, str] = {}
+        for raw, canonical in self.mapping.items():
+            if raw == canonical:
+                continue
+            conf = per_value.get(raw, {}).get("confidence", 1.0)
+            if conf >= min_confidence:
+                result[raw] = canonical
+        return result
+
     def explain(self, value: str) -> str:
         """Return human-readable explanation of why value was mapped."""
         canonical = self.mapping.get(value)

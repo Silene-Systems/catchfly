@@ -538,6 +538,10 @@ class LLMCanonicalization(BaseModel):
         mapping: dict[str, str] = {}
         clusters: dict[str, list[str]] = {}
         explanations: dict[str, str] = {}
+        per_value: dict[str, dict[str, Any]] = {}
+
+        _LLM_GROUPED_CONFIDENCE = 0.85
+        """LLM-grouped non-identity mappings carry slight uncertainty."""
 
         for group in groups:
             canonical = group["canonical"]
@@ -551,8 +555,10 @@ class LLMCanonicalization(BaseModel):
                     explanations[member] = (
                         f"grouped with '{canonical}' ({len(members)} members): {rationale}"
                     )
+                    per_value[member] = {"confidence": _LLM_GROUPED_CONFIDENCE}
                 else:
                     explanations[member] = f"canonical form ({len(members)} members): {rationale}"
+                    per_value[member] = {"confidence": 1.0}
 
         n_groups = len(groups)
         logger.info(
@@ -570,5 +576,6 @@ class LLMCanonicalization(BaseModel):
                 "field": context_field,
                 "n_groups": n_groups,
                 "explanations": explanations,
+                "per_value": per_value,
             },
         )
