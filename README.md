@@ -46,10 +46,45 @@ results.to_dataframe()  # → pandas DataFrame
 | | `ThreeStageDiscovery` | 3-stage progressive refinement (initial → refine → expand) |
 | | `SchemaOptimizer` | PARSE-style iterative field enrichment (descriptions, examples, synonyms) |
 | **Extraction** | `LLMDirectExtraction` | Per-document extraction with tool calling, retries, chunking |
-| **Normalization** | `EmbeddingClustering` | Embed → HDBSCAN/agglomerative → canonical selection |
+| **Normalization** | `CascadeNormalization` | Chain strategies with confidence-based routing + self-learning |
+| | `OntologyMapping` | Embed → NN search → LLM rerank against HPO/custom ontologies |
 | | `LLMCanonicalization` | LLM groups synonyms, map-reduce for large sets (>200 values) |
-| | `KLLMeansClustering` | k-means + LLM textual centroids, schema-seeded warmstart |
+| | `EmbeddingClustering` | Embed → HDBSCAN/agglomerative → canonical selection |
 | **Infrastructure** | `SchemaRegistry` | Version, diff, and persist schemas across runs |
+
+## Biomedical Normalization
+
+Map clinical terms to ontology entries using local SapBERT embeddings (zero API cost) with optional LLM reranking:
+
+```python
+from catchfly.normalization import CascadeNormalization, OntologyMapping
+from catchfly.providers import SentenceTransformerEmbeddingClient
+
+# SapBERT embeddings — 0.802 Acc@1 on BC5CDR, beats OpenAI embeddings
+embed_client = SentenceTransformerEmbeddingClient()  # default: SapBERT
+
+normalizer = OntologyMapping(
+    ontology="hpo",
+    embedding_client=embed_client,
+    augment_queries=True,  # LLM generates alternative phrasings (+10-20pp recall)
+)
+result = await normalizer.anormalize(
+    ["seizures", "high temperature", "low muscle tone"],
+    context_field="phenotype",
+)
+# result.mapping: {"seizures": "Seizure", "high temperature": "Fever", ...}
+
+# Self-learning cascade — learns from results, cheaper on re-runs
+cascade = CascadeNormalization.default(
+    dictionary={"ALT": "Alanine aminotransferase"},
+    ontology="hpo",
+    use_confidence=True,  # confidence-based routing between steps
+)
+result = await cascade.anormalize(values, context_field="phenotype")
+cascade.learn(result)  # next run resolves known mappings instantly ($0)
+```
+
+Requires: `pip install catchfly[embeddings,medical]`
 
 ## Local Models (Ollama)
 
@@ -148,6 +183,7 @@ results = pipeline.run(documents=docs)
 ```bash
 pip install catchfly                  # Core only (~5 MB)
 pip install catchfly[openai]          # + OpenAI SDK
+pip install catchfly[embeddings]      # + sentence-transformers (SapBERT, local)
 pip install catchfly[clustering]      # + scikit-learn, numpy, umap
 pip install catchfly[export]          # + pandas, pyarrow
 pip install catchfly[medical]         # + ontology loaders (HPO)
@@ -171,12 +207,15 @@ catchfly
 ├── extraction/
 │   └── LLMDirectExtraction        # Tool calling + retry + chunking
 ├── normalization/
-│   ├── EmbeddingClustering        # Embed → cluster → canonicalize
+│   ├── CascadeNormalization       # Chain strategies, confidence routing, learn()
+│   ├── OntologyMapping            # Embed → NN → LLM rerank (RAG augmentation)
 │   ├── LLMCanonicalization        # LLM synonym grouping (map-reduce)
-│   └── KLLMeansClustering         # k-means + LLM centroids + schema seed
+│   ├── LearnedDictionaryCache     # Persist mappings for reuse across runs
+│   └── EmbeddingClustering        # Embed → cluster → canonicalize
 ├── providers/
 │   ├── OpenAICompatibleClient     # Any OpenAI-compatible LLM endpoint
-│   └── OpenAIEmbeddingClient      # Embeddings with caching
+│   ├── OpenAIEmbeddingClient      # API embeddings with caching
+│   └── SentenceTransformerEmbeddingClient  # Local embeddings (SapBERT)
 ├── schema/
 │   ├── SchemaRegistry             # Version + diff + persist
 │   └── converters                 # JSON Schema ↔ Pydantic roundtrip

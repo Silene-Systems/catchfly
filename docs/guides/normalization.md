@@ -19,6 +19,55 @@ cascade = CascadeNormalization.default(
 result = cascade.normalize(values=extracted_values, context_field="phenotype")
 ```
 
+### Confidence-based routing
+
+By default, CascadeNormalization uses identity checks (mapped = canonical differs from raw). With confidence thresholds, low-confidence mappings flow to the next step instead of being accepted:
+
+```python
+cascade = CascadeNormalization.default(
+    dictionary=known_terms,
+    model="gpt-5.4-mini",
+    ontology="hpo",
+    use_confidence=True,  # Dictionary=1.0, LLM=0.80, Ontology=0.90
+)
+```
+
+Or set per-step thresholds manually:
+
+```python
+cascade = CascadeNormalization(
+    steps=[dict_step, llm_step, ontology_step],
+    confidence_thresholds=[1.0, 0.80, 0.90],
+)
+```
+
+### Self-learning
+
+After a normalization run, teach the cascade to remember high-confidence mappings:
+
+```python
+result = cascade.normalize(values=extracted_values, context_field="phenotype")
+
+# Prepend learned mappings as a dictionary step for next run
+cascade.learn(result)  # known mappings now resolve instantly ($0)
+```
+
+For persistent learning across runs, use `LearnedDictionaryCache`:
+
+```python
+from catchfly.normalization import LearnedDictionaryCache
+
+cache = LearnedDictionaryCache(path="./cache/normalizations.json", min_confidence=0.80)
+
+# After normalization
+cache.save({"phenotype": result})
+
+# On next run — load cached mappings
+cached_dict = cache.load_dictionary("phenotype")
+if cached_dict:
+    cascade.steps.insert(0, cached_dict)
+```
+
 ### Custom cascade
 
 ```python
@@ -75,6 +124,7 @@ normalizer = OntologyMapping(
     embedding_model="text-embedding-3-small",
     reranking_model="gpt-5.4-mini",        # None to skip LLM reranking
     top_k=5,                               # candidates per value
+    augment_queries=True,                  # RAG: generate alternative phrasings
 )
 
 result = normalizer.normalize(
@@ -105,6 +155,38 @@ print(result.explain("seizures"))
 
 The first run embeds all ontology terms (~50k texts for HPO). Results are cached to disk automatically alongside the ontology file. Subsequent runs load from cache instantly.
 
+### Local biomedical embeddings (SapBERT)
+
+For zero-cost biomedical embeddings that outperform OpenAI models:
+
+```python
+from catchfly.providers import SentenceTransformerEmbeddingClient
+
+# SapBERT: 0.802 Acc@1 on BC5CDR with reranking (beats text-embedding-3-large)
+embed_client = SentenceTransformerEmbeddingClient()  # default: SapBERT
+
+normalizer = OntologyMapping(
+    ontology="hpo",
+    embedding_client=embed_client,  # inject local client
+    reranking_model="gpt-5.4-mini",
+)
+```
+
+Requires: `pip install catchfly[embeddings]` (adds `sentence-transformers`)
+
+### RAG-augmented queries
+
+When `augment_queries=True`, the LLM generates alternative phrasings per value before embedding search. This improves recall by +10-20pp on biomedical benchmarks:
+
+```python
+normalizer = OntologyMapping(
+    ontology="hpo",
+    augment_queries=True,
+    augmentation_skip_threshold=0.95,  # skip for high-confidence matches
+    augmentation_n_phrasings=5,
+)
+```
+
 ### Without LLM reranking
 
 For faster, cheaper normalization, disable the LLM reranking step:
@@ -118,7 +200,7 @@ normalizer = OntologyMapping(
 
 **Best for:** Biomedical normalization, mapping to standardized ontologies, when you need ontology IDs.
 
-**Install:** `pip install catchfly[medical]` (adds `pronto` + `numpy`)
+**Install:** `pip install catchfly[medical]` (adds `pronto` + `numpy`). For local embeddings: `pip install catchfly[embeddings,medical]`
 
 ---
 

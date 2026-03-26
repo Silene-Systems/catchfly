@@ -46,13 +46,14 @@ results.to_dataframe()
 | | `TokenChunking`, `SentenceChunking`, `SemanticChunking` | Pluggable chunking via chonkie |
 | **Field Selection** | `LLMFieldSelector` | Auto-detect normalizable fields (default in `quick()`) |
 | | `StatisticalFieldSelector` | Zero-cost heuristic field detection |
-| **Normalization** | `CascadeNormalization` | Chain strategies: Dictionary → LLM → Ontology |
-| | `OntologyMapping` | Map to HPO/ICD-10/custom ontologies |
+| **Normalization** | `CascadeNormalization` | Chain strategies with confidence routing + self-learning |
+| | `OntologyMapping` | Map to HPO/custom ontologies (SapBERT, RAG augmentation) |
 | | `LLMCanonicalization` | General-purpose, schema-aware, hierarchical merge |
 | | `DictionaryNormalization` | Zero-cost exact or case-insensitive lookup |
+| | `LearnedDictionaryCache` | Persist mappings across runs (-80-95% cost on re-runs) |
 | | `CompositeNormalization` | Route different fields to different strategies |
 | | `EmbeddingClustering` | Fast, no LLM needed (after embedding) |
-| | `KLLMeansClustering` | Surface-form deduplication |
+| **Providers** | `SentenceTransformerEmbeddingClient` | Local biomedical embeddings (SapBERT, zero API cost) |
 
 ## Next Steps
 

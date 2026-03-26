@@ -27,3 +27,7 @@
 ## KLLMeansClustering
 
 ::: catchfly.normalization.kllmeans.KLLMeansClustering
+
+## LearnedDictionaryCache
+
+::: catchfly.normalization.learned_cache.LearnedDictionaryCache

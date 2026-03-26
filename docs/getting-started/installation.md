@@ -5,9 +5,10 @@
 ```bash
 pip install catchfly                  # Core only (~5 MB)
 pip install catchfly[openai]          # + OpenAI SDK
+pip install catchfly[embeddings]      # + sentence-transformers (SapBERT, local)
 pip install catchfly[clustering]      # + scikit-learn, numpy, umap
 pip install catchfly[export]          # + pandas, pyarrow
-pip install catchfly[medical]         # + ontology loaders
+pip install catchfly[medical]         # + ontology loaders (HPO)
 pip install catchfly[chunking]        # + chonkie (token/sentence/recursive)
 pip install catchfly[semantic-chunking]  # + chonkie with semantic splitting
 pip install catchfly[all]             # Everything
@@ -24,6 +25,7 @@ uv add catchfly[openai,clustering,export]
 | Extra | Packages | Used By |
 |---|---|---|
 | `openai` | `openai` SDK | LLM calls, embeddings (API-based) |
+| `embeddings` | `sentence-transformers` | `SentenceTransformerEmbeddingClient` (SapBERT, local biomedical) |
 | `clustering` | `scikit-learn`, `numpy`, `umap-learn` | EmbeddingClustering, KLLMeansClustering |
 | `export` | `pandas`, `pyarrow` | `results.to_dataframe()`, `.to_parquet()` |
 | `medical` | `pronto`, `numpy` | OntologyMapping (HPO, custom ontologies) |
