@@ -204,6 +204,9 @@ cython_debug/
 # Claude Code
 .claude/
 
+# Benchmarks (temporary, branch-only)
+benchmarks/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/
