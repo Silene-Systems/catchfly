@@ -163,7 +163,8 @@ class EmbeddingClustering(BaseModel):
     async def _get_embeddings(self, texts: list[str]) -> list[list[float]]:
         """Get embeddings via the configured provider."""
         client = self._get_embedding_client()
-        return await client.aembed(texts)
+        result: list[list[float]] = await client.aembed(texts)
+        return result
 
     def _reduce_dims(self, matrix: Any) -> Any:
         """Reduce dimensionality with UMAP."""

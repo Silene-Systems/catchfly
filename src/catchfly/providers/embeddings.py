@@ -187,7 +187,7 @@ class SentenceTransformerEmbeddingClient:
             return self._model_instance
 
         try:
-            from sentence_transformers import SentenceTransformer  # type: ignore[import-not-found]
+            from sentence_transformers import SentenceTransformer
         except ImportError as e:
             raise ImportError(
                 "sentence-transformers is required for "
@@ -208,7 +208,7 @@ class SentenceTransformerEmbeddingClient:
     def _detect_device() -> str:
         """Auto-detect best available device: CUDA > MPS > CPU."""
         try:
-            import torch  # type: ignore[import-not-found]
+            import torch
 
             if torch.cuda.is_available():
                 return "cuda"

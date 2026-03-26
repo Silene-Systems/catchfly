@@ -61,7 +61,10 @@ class CompositeNormalization:
             context_field,
             type(strategy).__name__,
         )
-        return await strategy.anormalize(values, context_field=context_field, **kwargs)
+        result: NormalizationResult = await strategy.anormalize(
+            values, context_field=context_field, **kwargs
+        )
+        return result
 
     def normalize(
         self,

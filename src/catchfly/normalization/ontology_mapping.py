@@ -113,7 +113,7 @@ class OntologyMapping(BaseModel):
         from catchfly.providers.llm import OpenAICompatibleClient
 
         return OpenAICompatibleClient(
-            model=self.reranking_model,
+            model=self.reranking_model or DEFAULT_MODEL,
             base_url=self.base_url,
             api_key=self.api_key,
             usage_callback=self._usage_callback,

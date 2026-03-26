@@ -64,6 +64,7 @@ class Pipeline:
         self.extraction = extraction
         self.field_selector = field_selector
         self.verbose = verbose
+        self.normalization: NormalizationStrategy | None
         if isinstance(normalization, dict):
             from catchfly.normalization.composite import CompositeNormalization
 
@@ -151,10 +152,13 @@ class Pipeline:
             checkpoint_dir: Directory for checkpoint state (enables resume).
         """
         # Resolve glob patterns to Document objects
+        docs: list[Document]
         if documents and isinstance(documents[0], str):
             from catchfly.loaders import resolve_documents
 
-            documents = resolve_documents(documents)  # type: ignore[arg-type]
+            docs = resolve_documents(documents)
+        else:
+            docs = documents  # type: ignore[assignment]
 
         tracker = UsageTracker(max_cost_usd=max_cost_usd)
         result = PipelineResult()
@@ -179,7 +183,7 @@ class Pipeline:
                 else:
                     logger.info("Pipeline: starting discovery")
                     discovered_schema = await self.discovery.adiscover(
-                        documents, domain_hint=domain_hint
+                        docs, domain_hint=domain_hint
                     )
                     result.schema = discovered_schema
                     extraction_model = discovered_schema.model
@@ -226,7 +230,7 @@ class Pipeline:
             if extraction_model is not None and self.extraction is not None:
                 # Check checkpoint for already-processed docs
                 processed_ids = checkpoint.load_processed_ids() if checkpoint else set()
-                remaining_docs = [d for d in documents if (d.id or "") not in processed_ids]
+                remaining_docs = [d for d in docs if (d.id or "") not in processed_ids]
 
                 if remaining_docs:
                     logger.info(
@@ -305,6 +309,7 @@ class Pipeline:
 
             # --- Normalization ---
             if normalize_fields and self.normalization is not None and result.records:
+                assert isinstance(normalize_fields, list)  # resolved above
                 logger.info(
                     "Pipeline: starting normalization for fields: %s",
                     normalize_fields,
