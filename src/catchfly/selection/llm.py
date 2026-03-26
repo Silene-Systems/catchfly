@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, PrivateAttr
 
 from catchfly._compat import run_sync
-from catchfly._types import Schema
-from catchfly.providers.llm import OpenAICompatibleClient
+from catchfly._defaults import DEFAULT_MODEL
+from catchfly._parsing import strip_markdown_fences
+
+if TYPE_CHECKING:
+    from catchfly._types import Schema
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +23,7 @@ decide which fields would benefit from value normalization (grouping synonyms, \
 fixing inconsistent naming, canonicalizing variants).
 
 Good candidates for normalization:
-- Categorical fields with inconsistent values ("NYC" vs "New York", "great battery" vs "long battery life")
+- Categorical fields with inconsistent values ("NYC" vs "New York")
 - Fields where the same concept appears in different surface forms
 - Tags, labels, categories, attributes with semantic overlap
 
@@ -79,17 +82,33 @@ class LLMFieldSelector(BaseModel):
     Cost: ~$0.001 (one short LLM call).
     """
 
-    model: str = "gpt-5.4-mini"
+    model: str = DEFAULT_MODEL
     num_sample_values: int = 20
     """Number of sample values to show per field in the prompt."""
     base_url: str | None = None
     api_key: str | None = None
     temperature: float = 0.0
     """Low temperature for deterministic classification."""
+    client: Any | None = None
+    """Pre-configured LLM client. If ``None``, a default client is created
+    from ``model``, ``base_url``, and ``api_key``."""
 
     _usage_callback: Any = PrivateAttr(default=None)
 
     model_config = {"arbitrary_types_allowed": True}
+
+    def _get_client(self) -> Any:
+        """Return the injected client or create a default one."""
+        if self.client is not None:
+            return self.client
+        from catchfly.providers.llm import OpenAICompatibleClient
+
+        return OpenAICompatibleClient(
+            model=self.model,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            usage_callback=self._usage_callback,
+        )
 
     async def aselect(
         self,
@@ -135,12 +154,7 @@ class LLMFieldSelector(BaseModel):
             return []
 
         # Build prompt and call LLM
-        client = OpenAICompatibleClient(
-            model=self.model,
-            base_url=self.base_url,
-            api_key=self.api_key,
-            usage_callback=self._usage_callback,
-        )
+        client = self._get_client()
 
         user_content = _build_user_prompt(schema, field_samples)
         messages = [
@@ -177,13 +191,7 @@ class LLMFieldSelector(BaseModel):
         props: dict[str, Any],
     ) -> list[str]:
         """Parse LLM response into a list of valid field names."""
-        text = content.strip()
-
-        # Strip markdown code fences if present
-        if text.startswith("```"):
-            lines = text.split("\n")
-            lines = [line for line in lines if not line.strip().startswith("```")]
-            text = "\n".join(lines).strip()
+        text = strip_markdown_fences(content)
 
         try:
             result = json.loads(text)

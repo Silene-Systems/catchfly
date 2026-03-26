@@ -124,6 +124,56 @@ class PipelineResult:
     errors: list[tuple[Document, Exception]] = field(default_factory=list)
     report: UsageReport = field(default_factory=UsageReport)
 
+    def apply_normalizations(self) -> list[dict[str, Any]]:
+        """Return records with normalized values applied.
+
+        For each record, replaces raw field values with their canonical forms
+        from ``self.normalizations``. Handles both scalar string fields and
+        list-of-string fields.
+
+        Returns:
+            List of dicts with normalized values. Pydantic model records are
+            converted to dicts first since normalization may change value types.
+        """
+        rows = self._records_to_dicts()
+
+        if not self.normalizations:
+            return rows
+
+        result = []
+        for row in rows:
+            normalized = dict(row)
+            for field_name, norm_result in self.normalizations.items():
+                if field_name not in normalized:
+                    continue
+                value = normalized[field_name]
+                if isinstance(value, list):
+                    normalized[field_name] = [
+                        norm_result.mapping.get(str(v), str(v)) for v in value
+                    ]
+                elif value is not None:
+                    str_val = str(value)
+                    normalized[field_name] = norm_result.mapping.get(str_val, str_val)
+            result.append(normalized)
+        return result
+
+    @property
+    def normalized_records(self) -> list[dict[str, Any]]:
+        """Alias for :meth:`apply_normalizations`."""
+        return self.apply_normalizations()
+
+    def _records_to_dicts(self) -> list[dict[str, Any]]:
+        """Convert records to list of dicts regardless of their type."""
+        rows: list[dict[str, Any]] = []
+        for r in self.records:
+            if hasattr(r, "model_dump"):
+                rows.append(r.model_dump())
+            elif isinstance(r, dict):
+                rows.append(dict(r))
+            else:
+                rows.append({"_raw": str(r)})
+        return rows
+
     def to_dataframe(self) -> Any:
         """Convert records to a pandas DataFrame."""
         try:
@@ -137,8 +187,7 @@ class PipelineResult:
         if not self.records:
             return pd.DataFrame()
 
-        rows = [r.model_dump() if hasattr(r, "model_dump") else r for r in self.records]
-        return pd.DataFrame(rows)
+        return pd.DataFrame(self._records_to_dicts())
 
     def to_csv(self, path: str | Path) -> None:
         """Export records to CSV."""

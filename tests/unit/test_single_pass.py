@@ -202,3 +202,10 @@ class TestBuildUserPrompt:
         prompt = _build_user_prompt(self._make_docs())
         assert "at most" not in prompt
         assert "should include these fields" not in prompt
+
+
+class TestTemperatureDefault:
+    def test_default_temperature_is_deterministic(self) -> None:
+        """Default temperature should be low for reproducible schemas."""
+        discovery = SinglePassDiscovery()
+        assert discovery.temperature == 0.3

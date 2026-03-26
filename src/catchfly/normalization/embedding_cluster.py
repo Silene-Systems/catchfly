@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel, PrivateAttr
 
 from catchfly._compat import run_sync
+from catchfly._defaults import DEFAULT_EMBEDDING_MODEL
 from catchfly._types import NormalizationResult
 from catchfly.exceptions import NormalizationError
 
@@ -74,7 +75,7 @@ class EmbeddingClustering(BaseModel):
     5. Select canonical name per cluster (most frequent value)
     """
 
-    embedding_model: str = "text-embedding-3-small"
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL
     similarity_threshold: float = 0.8
     """0.8 cosine similarity threshold — empirically effective for surface-form variants."""
     clustering_algorithm: str = "hdbscan"
@@ -86,9 +87,24 @@ class EmbeddingClustering(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
 
+    embedding_client: Any | None = None
+    """Pre-configured embedding client."""
+
     _usage_callback: Any = PrivateAttr(default=None)
 
     model_config = {"arbitrary_types_allowed": True}
+
+    def _get_embedding_client(self) -> Any:
+        """Return the injected embedding client or create a default one."""
+        if self.embedding_client is not None:
+            return self.embedding_client
+        from catchfly.providers.embeddings import OpenAIEmbeddingClient
+
+        return OpenAIEmbeddingClient(
+            model=self.embedding_model,
+            base_url=self.base_url,
+            api_key=self.api_key,
+        )
 
     async def anormalize(
         self,
@@ -146,13 +162,7 @@ class EmbeddingClustering(BaseModel):
 
     async def _get_embeddings(self, texts: list[str]) -> list[list[float]]:
         """Get embeddings via the configured provider."""
-        from catchfly.providers.embeddings import OpenAIEmbeddingClient
-
-        client = OpenAIEmbeddingClient(
-            model=self.embedding_model,
-            base_url=self.base_url,
-            api_key=self.api_key,
-        )
+        client = self._get_embedding_client()
         return await client.aembed(texts)
 
     def _reduce_dims(self, matrix: Any) -> Any:
@@ -166,6 +176,7 @@ class EmbeddingClustering(BaseModel):
             return matrix
 
         n_components = min(self.umap_n_components, n_samples - 1)
+        # UMAP default; balances local vs global structure preservation
         n_neighbors = min(15, n_samples - 1)
 
         logger.debug(
@@ -177,7 +188,7 @@ class EmbeddingClustering(BaseModel):
         reducer = umap_mod.UMAP(
             n_components=n_components,
             n_neighbors=n_neighbors,
-            random_state=42,
+            random_state=42,  # deterministic for reproducibility
         )
         return reducer.fit_transform(matrix)
 
@@ -185,6 +196,7 @@ class EmbeddingClustering(BaseModel):
         """Run clustering algorithm on embedding matrix."""
         if self.clustering_algorithm == "hdbscan":
             HDBSCAN = _import_sklearn_hdbscan()
+            # Ensure min_cluster_size is feasible: at least 2, at most 1/3 of values
             min_size = min(self.min_cluster_size, max(2, n_values // 3))
             clusterer = HDBSCAN(
                 min_cluster_size=min_size,

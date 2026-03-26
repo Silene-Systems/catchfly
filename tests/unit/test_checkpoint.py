@@ -11,7 +11,7 @@ from catchfly._types import Schema
 
 if TYPE_CHECKING:
     from pathlib import Path
-from catchfly.pipeline import _Checkpoint
+from catchfly.checkpoint import _Checkpoint
 
 
 class TestCheckpoint:

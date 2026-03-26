@@ -12,15 +12,18 @@ from __future__ import annotations
 import logging
 import math
 from collections import Counter
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, PrivateAttr
 
 from catchfly._compat import run_sync
+from catchfly._defaults import DEFAULT_EMBEDDING_MODEL, DEFAULT_MODEL
 from catchfly._types import NormalizationResult
 from catchfly.exceptions import ProviderError
-from catchfly.providers.embeddings import OpenAIEmbeddingClient
-from catchfly.providers.llm import OpenAICompatibleClient
+
+if TYPE_CHECKING:
+    from catchfly.providers.embeddings import OpenAIEmbeddingClient
+    from catchfly.providers.llm import OpenAICompatibleClient
 
 logger = logging.getLogger(__name__)
 
@@ -67,8 +70,8 @@ class KLLMeansClustering(BaseModel):
 
     num_clusters: int | None = None
     """None = auto-detect via silhouette score over [2, sqrt(n)]."""
-    embedding_model: str = "text-embedding-3-small"
-    summarization_model: str = "gpt-5.4-mini"
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL
+    summarization_model: str = DEFAULT_MODEL
     num_iterations: int = 10
     """10 iterations is sufficient for convergence on typical IE datasets."""
     summarize_every: int = 3
@@ -78,9 +81,40 @@ class KLLMeansClustering(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
 
+    client: Any | None = None
+    """Pre-configured LLM client for cluster summaries."""
+
+    embedding_client: Any | None = None
+    """Pre-configured embedding client. If ``None``, a default client is created."""
+
     _usage_callback: Any = PrivateAttr(default=None)
 
     model_config = {"arbitrary_types_allowed": True}
+
+    def _get_client(self) -> Any:
+        """Return the injected LLM client or create a default one."""
+        if self.client is not None:
+            return self.client
+        from catchfly.providers.llm import OpenAICompatibleClient
+
+        return OpenAICompatibleClient(
+            model=self.summarization_model,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            usage_callback=self._usage_callback,
+        )
+
+    def _get_embedding_client(self) -> Any:
+        """Return the injected embedding client or create a default one."""
+        if self.embedding_client is not None:
+            return self.embedding_client
+        from catchfly.providers.embeddings import OpenAIEmbeddingClient
+
+        return OpenAIEmbeddingClient(
+            model=self.embedding_model,
+            base_url=self.base_url,
+            api_key=self.api_key,
+        )
 
     async def anormalize(
         self,
@@ -100,11 +134,7 @@ class KLLMeansClustering(BaseModel):
             return self._trivial_result(unique_values, context_field)
 
         # Embed all values
-        embed_client = OpenAIEmbeddingClient(
-            model=self.embedding_model,
-            base_url=self.base_url,
-            api_key=self.api_key,
-        )
+        embed_client = self._get_embedding_client()
         raw_embeddings = await embed_client.aembed(unique_values)
         embeddings = np.array(raw_embeddings, dtype=np.float64)
 
@@ -123,12 +153,7 @@ class KLLMeansClustering(BaseModel):
         )
 
         # k-LLMmeans loop
-        llm_client = OpenAICompatibleClient(
-            model=self.summarization_model,
-            base_url=self.base_url,
-            api_key=self.api_key,
-            usage_callback=self._usage_callback,
-        )
+        llm_client = self._get_client()
 
         assignments = np.zeros(len(unique_values), dtype=int)
         for iteration in range(1, self.num_iterations + 1):

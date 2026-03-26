@@ -6,6 +6,7 @@ import logging
 import os
 from typing import Any, Protocol, runtime_checkable
 
+from catchfly._defaults import DEFAULT_EMBEDDING_MODEL
 from catchfly.exceptions import ProviderError
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ class EmbeddingClient(Protocol):
 # ---------------------------------------------------------------------------
 
 _DEFAULT_BATCH_SIZE = 2048
+"""Max texts per OpenAI embeddings API call (API limit is 2048)."""
 
 
 class OpenAIEmbeddingClient:
@@ -40,7 +42,7 @@ class OpenAIEmbeddingClient:
 
     def __init__(
         self,
-        model: str = "text-embedding-3-small",
+        model: str = DEFAULT_EMBEDDING_MODEL,
         base_url: str | None = None,
         api_key: str | None = None,
         batch_size: int = _DEFAULT_BATCH_SIZE,

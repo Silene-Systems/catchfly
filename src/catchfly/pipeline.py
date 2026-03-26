@@ -2,23 +2,24 @@
 
 from __future__ import annotations
 
-import json
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from catchfly._compat import run_sync
+from catchfly._defaults import DEFAULT_MODEL
 from catchfly._types import (
     Document,
     NormalizationResult,
     PipelineResult,
     Schema,
 )
-from catchfly.exceptions import BudgetExceededError
+from catchfly.checkpoint import _Checkpoint
+from catchfly.exceptions import BudgetExceededError, SchemaError
 from catchfly.telemetry.tracker import UsageTracker
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from pydantic import BaseModel
 
@@ -73,7 +74,7 @@ class Pipeline:
     @classmethod
     def quick(
         cls,
-        model: str = "gpt-5.4-mini",
+        model: str = DEFAULT_MODEL,
         base_url: str | None = None,
         api_key: str | None = None,
         on_error: Literal["raise", "skip", "collect"] = "raise",
@@ -132,10 +133,9 @@ class Pipeline:
         domain_hint: str | None = None,
         normalize_fields: list[str] | Literal["all"] | None = None,
         max_cost_usd: float | None = None,
-        schema: type[BaseModel] | None = None,
+        schema: type[BaseModel] | dict[str, Any] | None = None,
         checkpoint_dir: str | Path | None = None,
         on_schema_ready: Callable[[Schema], Schema | None] | None = None,
-        **kwargs: Any,
     ) -> PipelineResult:
         """Run the full pipeline asynchronously.
 
@@ -146,7 +146,8 @@ class Pipeline:
             normalize_fields: Fields to normalize. Use ``"all"`` to auto-detect
                 string fields from the schema. ``None`` skips normalization.
             max_cost_usd: Budget limit — pipeline halts if exceeded.
-            schema: Pre-existing Pydantic model — skips discovery if provided.
+            schema: Pre-existing Pydantic model or JSON Schema dict —
+                skips discovery if provided.
             checkpoint_dir: Directory for checkpoint state (enables resume).
         """
         # Resolve glob patterns to Document objects
@@ -160,16 +161,13 @@ class Pipeline:
         checkpoint = _Checkpoint(checkpoint_dir) if checkpoint_dir else None
 
         # Wire usage tracking into strategies
-        if self.discovery is not None:
-            setattr(self.discovery, "_usage_callback", tracker.make_callback("discovery"))  # noqa: B010
-        if self.extraction is not None:
-            setattr(self.extraction, "_usage_callback", tracker.make_callback("extraction"))  # noqa: B010
-        if self.normalization is not None:
-            setattr(self.normalization, "_usage_callback", tracker.make_callback("normalization"))  # noqa: B010
+        self._wire_tracker(tracker)
 
         try:
             # --- Discovery ---
-            extraction_model: type[BaseModel] | None = schema
+            extraction_model: type[BaseModel] | None = (
+                schema if not isinstance(schema, dict) else None
+            )
 
             if schema is None and self.discovery is not None:
                 # Check checkpoint for saved schema
@@ -192,11 +190,31 @@ class Pipeline:
                         len(discovered_schema.json_schema.get("properties", {})),
                     )
             elif schema is not None:
-                result.schema = Schema(
-                    model=schema,
-                    json_schema=schema.model_json_schema(),
-                    lineage=["user-provided"],
-                )
+                if isinstance(schema, dict):
+                    from catchfly.schema.converters import json_schema_to_pydantic
+
+                    try:
+                        pydantic_model = json_schema_to_pydantic(
+                            schema, "UserSchema"
+                        )
+                    except SchemaError as e:
+                        raise SchemaError(
+                            f"Could not convert dict schema to Pydantic model. "
+                            f"Ensure the dict has 'properties' with valid "
+                            f"JSON Schema types: {e}"
+                        ) from e
+                    result.schema = Schema(
+                        model=pydantic_model,
+                        json_schema=schema,
+                        lineage=["user-provided"],
+                    )
+                    extraction_model = pydantic_model
+                else:
+                    result.schema = Schema(
+                        model=schema,
+                        json_schema=schema.model_json_schema(),
+                        lineage=["user-provided"],
+                    )
 
             # --- Schema callback ---
             if on_schema_ready is not None and result.schema is not None:
@@ -277,7 +295,9 @@ class Pipeline:
                 # --- Field Selection (auto) ---
                 logger.info("Pipeline: running field selector to choose normalization targets")
                 if self.field_selector is not None:
-                    setattr(self.field_selector, "_usage_callback", tracker.make_callback("field_selection"))  # noqa: B010
+                    self._inject_callback(
+                        self.field_selector, tracker.make_callback("field_selection")
+                    )
                 normalize_fields = await self.field_selector.aselect(
                     result.schema, result.records
                 )
@@ -317,10 +337,9 @@ class Pipeline:
         domain_hint: str | None = None,
         normalize_fields: list[str] | Literal["all"] | None = None,
         max_cost_usd: float | None = None,
-        schema: type[BaseModel] | None = None,
+        schema: type[BaseModel] | dict[str, Any] | None = None,
         checkpoint_dir: str | Path | None = None,
         on_schema_ready: Callable[[Schema], Schema | None] | None = None,
-        **kwargs: Any,
     ) -> PipelineResult:
         """Run the full pipeline synchronously."""
         return run_sync(
@@ -332,7 +351,6 @@ class Pipeline:
                 schema=schema,
                 checkpoint_dir=checkpoint_dir,
                 on_schema_ready=on_schema_ready,
-                **kwargs,
             )
         )
 
@@ -393,6 +411,28 @@ class Pipeline:
             logger.debug("tqdm not installed, progress bars disabled")
             return iterable
 
+    def _wire_tracker(self, tracker: UsageTracker) -> None:
+        """Wire usage tracking into all configured strategies."""
+        stages: list[tuple[str, Any]] = [
+            ("discovery", self.discovery),
+            ("extraction", self.extraction),
+            ("normalization", self.normalization),
+        ]
+        for stage_name, strategy in stages:
+            if strategy is not None:
+                self._inject_callback(strategy, tracker.make_callback(stage_name))
+
+    @staticmethod
+    def _inject_callback(strategy: Any, callback: Any) -> None:
+        """Inject a usage callback into a strategy.
+
+        Sets ``_usage_callback`` on the strategy so that ``_get_client()``
+        picks it up when creating a default LLM client. Falls back silently
+        if the strategy doesn't support usage tracking.
+        """
+        if hasattr(strategy, "_usage_callback"):
+            strategy._usage_callback = callback
+
     async def _normalize_fields(
         self,
         records: list[Any],
@@ -405,7 +445,12 @@ class Pipeline:
         to the normalization strategy (e.g. LLMCanonicalization uses it
         for schema-aware prompting).
         """
-        assert self.normalization is not None
+        if self.normalization is None:
+            msg = (
+                "Pipeline._normalize_fields() called without a normalization strategy. "
+                "This is an internal error — please report it."
+            )
+            raise RuntimeError(msg)
         normalizations: dict[str, NormalizationResult] = {}
 
         for field_name in self._iter_progress(
@@ -450,116 +495,3 @@ class Pipeline:
             )
 
         return normalizations
-
-
-# ---------------------------------------------------------------------------
-# Checkpoint support
-# ---------------------------------------------------------------------------
-
-
-class _Checkpoint:
-    """Manages pipeline checkpoint state on disk.
-
-    Files:
-    - schema.json — discovered schema
-    - records.jsonl — extracted records (one per line, append-safe)
-    - state.json — set of processed document IDs
-    """
-
-    def __init__(self, directory: str | Path) -> None:
-        self._dir = Path(directory)
-        self._dir.mkdir(parents=True, exist_ok=True)
-
-    @property
-    def _schema_path(self) -> Path:
-        return self._dir / "schema.json"
-
-    @property
-    def _records_path(self) -> Path:
-        return self._dir / "records.jsonl"
-
-    @property
-    def _state_path(self) -> Path:
-        return self._dir / "state.json"
-
-    def save_schema(self, schema: Schema) -> None:
-        """Persist discovered schema."""
-        data = {
-            "json_schema": schema.json_schema,
-            "field_metadata": schema.field_metadata,
-            "lineage": schema.lineage,
-        }
-        self._schema_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        logger.debug("Checkpoint: saved schema to %s", self._schema_path)
-
-    def load_schema(self) -> Schema | None:
-        """Load schema from checkpoint, or None if not found."""
-        if not self._schema_path.exists():
-            return None
-
-        try:
-            data = json.loads(self._schema_path.read_text(encoding="utf-8"))
-            from catchfly.schema.converters import json_schema_to_pydantic
-
-            json_schema = data["json_schema"]
-            model = None
-            try:
-                model = json_schema_to_pydantic(json_schema, "CheckpointSchema")
-            except (ValueError, TypeError, KeyError) as e:
-                logger.debug(
-                    "Checkpoint: could not reconstruct Pydantic model, "
-                    "falling back to JSON Schema only: %s",
-                    e,
-                )
-
-            return Schema(
-                model=model,
-                json_schema=json_schema,
-                field_metadata=data.get("field_metadata", {}),
-                lineage=data.get("lineage", []),
-            )
-        except (json.JSONDecodeError, OSError, KeyError) as e:
-            logger.warning("Checkpoint: failed to load schema: %s", e, exc_info=True)
-            return None
-
-    def append_record(self, record: Any) -> None:
-        """Append a single record to the JSONL file."""
-        if hasattr(record, "model_dump"):
-            data = record.model_dump()
-        elif isinstance(record, dict):
-            data = record
-        else:
-            data = {"_raw": str(record)}
-
-        with open(self._records_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(data, default=str) + "\n")
-
-    def load_records(self) -> list[dict[str, Any]]:
-        """Load all records from checkpoint JSONL."""
-        if not self._records_path.exists():
-            return []
-
-        records: list[dict[str, Any]] = []
-        for line in self._records_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line:
-                records.append(json.loads(line))
-        return records
-
-    def mark_processed(self, doc_id: str) -> None:
-        """Mark a document ID as processed."""
-        ids = self.load_processed_ids()
-        ids.add(doc_id)
-        self._state_path.write_text(json.dumps(sorted(ids), indent=2), encoding="utf-8")
-
-    def load_processed_ids(self) -> set[str]:
-        """Load the set of already-processed document IDs."""
-        if not self._state_path.exists():
-            return set()
-
-        try:
-            data = json.loads(self._state_path.read_text(encoding="utf-8"))
-            return set(data) if isinstance(data, list) else set()
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning("Checkpoint: failed to load processed IDs: %s", e)
-            return set()

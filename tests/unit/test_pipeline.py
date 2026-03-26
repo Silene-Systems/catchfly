@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from pydantic import BaseModel
 
 from catchfly._types import Document, NormalizationResult
+from catchfly.exceptions import SchemaError
 from catchfly.pipeline import Pipeline
 
 # --- Mock strategies ---
@@ -178,6 +180,35 @@ class TestPipeline:
         assert estimate["total"] >= 0
 
 
+class TestDictSchema:
+    async def test_arun_with_dict_schema(self) -> None:
+        """Pipeline accepts a plain dict JSON Schema and converts it."""
+        json_schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "rating": {"type": "integer"},
+            },
+            "required": ["title"],
+        }
+        pipeline = Pipeline(extraction=MockExtraction())
+        result = await pipeline.arun(_make_docs(2), schema=json_schema)
+
+        assert result.schema is not None
+        assert result.schema.lineage == ["user-provided"]
+        assert result.schema.model is not None
+        assert "title" in result.schema.json_schema["properties"]
+        assert len(result.records) == 2
+
+    async def test_arun_with_invalid_dict_schema_raises(self) -> None:
+        """Pipeline raises SchemaError for a dict without properties."""
+        bad_schema: dict[str, Any] = {"type": "object"}
+        pipeline = Pipeline(extraction=MockExtraction())
+
+        with pytest.raises(SchemaError, match="Could not convert dict schema"):
+            await pipeline.arun(_make_docs(1), schema=bad_schema)
+
+
 class TestOnSchemaReady:
     async def test_callback_modifies_schema(self) -> None:
         """on_schema_ready callback can modify the schema."""
@@ -238,15 +269,26 @@ class TestUsageTrackerWiring:
         assert result.report.total_cost_usd >= 0
 
     async def test_usage_callback_attribute_set(self) -> None:
-        """Pipeline sets _usage_callback on strategies before running."""
+        """Pipeline sets _usage_callback on strategies that support it."""
         disc = MockDiscovery()
         ext = MockExtraction()
         norm = MockNormalization()
+        # Add _usage_callback attribute to simulate real strategies
+        disc._usage_callback = None  # type: ignore[attr-defined]
+        ext._usage_callback = None  # type: ignore[attr-defined]
+        norm._usage_callback = None  # type: ignore[attr-defined]
         pipeline = Pipeline(discovery=disc, extraction=ext, normalization=norm)
         await pipeline.arun(_make_docs(1), domain_hint="test")
-        assert hasattr(disc, "_usage_callback")
-        assert hasattr(ext, "_usage_callback")
-        assert hasattr(norm, "_usage_callback")
+        assert disc._usage_callback is not None  # type: ignore[attr-defined]
+        assert ext._usage_callback is not None  # type: ignore[attr-defined]
+        assert norm._usage_callback is not None  # type: ignore[attr-defined]
+
+    async def test_wire_tracker_skips_strategies_without_callback(self) -> None:
+        """Pipeline doesn't crash on strategies without _usage_callback."""
+        disc = MockDiscovery()  # no _usage_callback
+        pipeline = Pipeline(discovery=disc)
+        # Should not raise
+        await pipeline.arun(_make_docs(1), domain_hint="test")
 
 
 class TestVerbose:
@@ -285,12 +327,95 @@ class TestGlobDocuments:
         assert len(result.records) == 2
 
 
+class TestFieldSelector:
+    async def test_field_selector_auto_selects(self) -> None:
+        """When normalize_fields is None and field_selector is set, selector decides."""
+
+        class MockFieldSelector:
+            async def aselect(self, schema: Any, records: list[Any], **kwargs: Any) -> list[str]:
+                return ["title"]
+
+            def select(self, schema: Any, records: list[Any], **kwargs: Any) -> list[str]:
+                return ["title"]
+
+        pipeline = Pipeline(
+            discovery=MockDiscovery(),
+            extraction=MockExtraction(),
+            normalization=MockNormalization(),
+            field_selector=MockFieldSelector(),
+        )
+        result = await pipeline.arun(_make_docs(3), domain_hint="test")
+
+        # Selector should have picked "title"
+        assert "title" in result.normalizations
+
+    async def test_explicit_normalize_fields_overrides_selector(self) -> None:
+        """Explicit normalize_fields should bypass field_selector."""
+
+        class MockFieldSelector:
+            def __init__(self) -> None:
+                self.called = False
+
+            async def aselect(self, schema: Any, records: list[Any], **kwargs: Any) -> list[str]:
+                self.called = True
+                return ["title"]
+
+            def select(self, schema: Any, records: list[Any], **kwargs: Any) -> list[str]:
+                self.called = True
+                return ["title"]
+
+        selector = MockFieldSelector()
+        pipeline = Pipeline(
+            discovery=MockDiscovery(),
+            extraction=MockExtraction(),
+            normalization=MockNormalization(),
+            field_selector=selector,
+        )
+        result = await pipeline.arun(
+            _make_docs(2), domain_hint="test", normalize_fields=["title"]
+        )
+
+        # Selector should NOT have been called
+        assert not selector.called
+        assert "title" in result.normalizations
+
+    async def test_no_selector_no_normalize_fields_skips(self) -> None:
+        """No selector + no normalize_fields = no normalization (backwards-compat)."""
+        pipeline = Pipeline(
+            discovery=MockDiscovery(),
+            extraction=MockExtraction(),
+            normalization=MockNormalization(),
+        )
+        result = await pipeline.arun(_make_docs(2), domain_hint="test")
+        assert result.normalizations == {}
+
+    async def test_selector_returns_empty_list(self) -> None:
+        """Selector returning [] means nothing to normalize."""
+
+        class EmptySelector:
+            async def aselect(self, schema: Any, records: list[Any], **kwargs: Any) -> list[str]:
+                return []
+
+            def select(self, schema: Any, records: list[Any], **kwargs: Any) -> list[str]:
+                return []
+
+        pipeline = Pipeline(
+            discovery=MockDiscovery(),
+            extraction=MockExtraction(),
+            normalization=MockNormalization(),
+            field_selector=EmptySelector(),
+        )
+        result = await pipeline.arun(_make_docs(2), domain_hint="test")
+        assert result.normalizations == {}
+
+
 class TestPipelineQuick:
     def test_quick_creates_all_strategies(self) -> None:
         pipeline = Pipeline.quick(model="gpt-5.4-mini")
         assert pipeline.discovery is not None
         assert pipeline.extraction is not None
         assert pipeline.normalization is not None
+        assert pipeline.field_selector is not None
 
     def test_quick_with_base_url(self) -> None:
         pipeline = Pipeline.quick(
@@ -298,3 +423,12 @@ class TestPipelineQuick:
             base_url="http://localhost:11434/v1",
         )
         assert pipeline.discovery is not None
+
+
+class TestNormalizeFieldsGuard:
+    @pytest.mark.asyncio
+    async def test_normalize_fields_raises_without_strategy(self) -> None:
+        """_normalize_fields raises RuntimeError if normalization is None."""
+        pipeline = Pipeline()
+        with pytest.raises(RuntimeError, match="normalization strategy"):
+            await pipeline._normalize_fields([], ["field_a"])

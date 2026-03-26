@@ -10,6 +10,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, PrivateAttr, ValidationError
 
 from catchfly._compat import run_sync
+from catchfly._defaults import DEFAULT_MODEL
+from catchfly._parsing import strip_markdown_fences
 from catchfly._types import Document, ExtractionResult, RecordProvenance
 from catchfly.exceptions import ExtractionError
 from catchfly.extraction.chunking import chunk_document
@@ -66,7 +68,7 @@ class LLMDirectExtraction(BaseModel):
     validation errors with feedback.
     """
 
-    model: str = "gpt-5.4-mini"
+    model: str = DEFAULT_MODEL
     chunk_size: int = 4000
     """4000 chars (~1000 tokens) fits most models' context with room for schema + prompt."""
     chunk_overlap: int = 200
@@ -79,10 +81,24 @@ class LLMDirectExtraction(BaseModel):
     on_error: Literal["raise", "skip", "collect"] = "raise"
     base_url: str | None = None
     api_key: str | None = None
+    client: Any | None = None
+    """Pre-configured LLM client. If ``None``, a default client is created
+    from ``model``, ``base_url``, and ``api_key``."""
 
     _usage_callback: Any = PrivateAttr(default=None)
 
     model_config = {"arbitrary_types_allowed": True}
+
+    def _get_client(self) -> Any:
+        """Return the injected client or create a default one."""
+        if self.client is not None:
+            return self.client
+        return OpenAICompatibleClient(
+            model=self.model,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            usage_callback=self._usage_callback,
+        )
 
     async def aextract(
         self,
@@ -102,12 +118,7 @@ class LLMDirectExtraction(BaseModel):
             )
 
         json_schema = schema.model_json_schema()
-        client = OpenAICompatibleClient(
-            model=self.model,
-            base_url=self.base_url,
-            api_key=self.api_key,
-            usage_callback=self._usage_callback,
-        )
+        client = self._get_client()
 
         # Chunk documents
         all_chunks: list[Document] = []
@@ -248,11 +259,7 @@ class LLMDirectExtraction(BaseModel):
     @staticmethod
     def _parse_json(content: str) -> dict[str, Any]:
         """Parse JSON from LLM response, handling markdown fences."""
-        text = content.strip()
-        if text.startswith("```"):
-            lines = text.split("\n")
-            lines = [line for line in lines if not line.strip().startswith("```")]
-            text = "\n".join(lines)
+        text = strip_markdown_fences(content)
 
         data = json.loads(text)
         if not isinstance(data, dict):

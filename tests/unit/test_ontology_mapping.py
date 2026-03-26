@@ -92,25 +92,12 @@ _VECTORS: dict[str, list[float]] = {
 
 
 @contextmanager
-def _patch_clients(
-    embedder: MockOntologyEmbedder,
-    llm: MockRerankingLLM | None = None,
+def _patch_source(
     entries: list[OntologyEntry] | None = None,
 ) -> Iterator[None]:
-    """Patch embedding client, LLM client, and ontology source."""
+    """Patch ontology source resolution to return sample entries."""
     import catchfly.normalization.ontology_mapping as mod
-    import catchfly.ontology.index as idx_mod
 
-    orig_embed = idx_mod.OpenAIEmbeddingClient
-    orig_llm = mod.OpenAICompatibleClient
-    orig_embed2 = mod.OpenAIEmbeddingClient
-
-    idx_mod.OpenAIEmbeddingClient = lambda **kw: embedder  # type: ignore[assignment,misc]
-    mod.OpenAIEmbeddingClient = lambda **kw: embedder  # type: ignore[assignment,misc]
-    if llm:
-        mod.OpenAICompatibleClient = lambda **kw: llm  # type: ignore[assignment,misc]
-
-    # Patch source resolution to return our sample entries
     _entries = entries or SAMPLE_ENTRIES
     orig_resolve = mod.OntologyMapping._resolve_source
 
@@ -125,9 +112,6 @@ def _patch_clients(
     try:
         yield
     finally:
-        idx_mod.OpenAIEmbeddingClient = orig_embed  # type: ignore[assignment]
-        mod.OpenAIEmbeddingClient = orig_embed2  # type: ignore[assignment]
-        mod.OpenAICompatibleClient = orig_llm  # type: ignore[assignment]
         mod.OntologyMapping._resolve_source = orig_resolve  # type: ignore[assignment]
 
 
@@ -144,9 +128,11 @@ class TestOntologyMapping:
     async def test_exact_match_no_reranking(self) -> None:
         """Value matching an ontology term name maps correctly without LLM."""
         embedder = MockOntologyEmbedder(_VECTORS)
-        normalizer = OntologyMapping(ontology="hpo", reranking_model=None)
+        normalizer = OntologyMapping(
+            ontology="hpo", reranking_model=None, embedding_client=embedder,
+        )
 
-        with _patch_clients(embedder):
+        with _patch_source():
             result = await normalizer.anormalize(["seizures"], context_field="phenotype")
 
         assert result.mapping["seizures"] == "Seizure"
@@ -154,9 +140,11 @@ class TestOntologyMapping:
 
     async def test_multiple_values(self) -> None:
         embedder = MockOntologyEmbedder(_VECTORS)
-        normalizer = OntologyMapping(ontology="hpo", reranking_model=None)
+        normalizer = OntologyMapping(
+            ontology="hpo", reranking_model=None, embedding_client=embedder,
+        )
 
-        with _patch_clients(embedder):
+        with _patch_source():
             result = await normalizer.anormalize(
                 ["seizures", "unsteady gait", "high temperature"],
                 context_field="phenotype",
@@ -169,9 +157,12 @@ class TestOntologyMapping:
     async def test_with_reranking(self) -> None:
         embedder = MockOntologyEmbedder(_VECTORS)
         mock_llm = MockRerankingLLM()
-        normalizer = OntologyMapping(ontology="hpo", reranking_model="mock")
+        normalizer = OntologyMapping(
+            ontology="hpo", reranking_model="mock",
+            embedding_client=embedder, client=mock_llm,
+        )
 
-        with _patch_clients(embedder, mock_llm):
+        with _patch_source():
             result = await normalizer.anormalize(["seizures"], context_field="phenotype")
 
         assert mock_llm.call_count == 1
@@ -182,9 +173,11 @@ class TestOntologyMapping:
 
     async def test_explain_includes_ontology_id(self) -> None:
         embedder = MockOntologyEmbedder(_VECTORS)
-        normalizer = OntologyMapping(ontology="hpo", reranking_model=None)
+        normalizer = OntologyMapping(
+            ontology="hpo", reranking_model=None, embedding_client=embedder,
+        )
 
-        with _patch_clients(embedder):
+        with _patch_source():
             result = await normalizer.anormalize(["seizures"], context_field="phenotype")
 
         explanation = result.explain("seizures")
@@ -198,9 +191,12 @@ class TestOntologyMapping:
         mock_llm = MockRerankingLLM(
             responses=[{"selected_id": "HP:002", "confidence": 0.8, "rationale": "override"}]
         )
-        normalizer = OntologyMapping(ontology="hpo", reranking_model="mock")
+        normalizer = OntologyMapping(
+            ontology="hpo", reranking_model="mock",
+            embedding_client=embedder, client=mock_llm,
+        )
 
-        with _patch_clients(embedder, mock_llm):
+        with _patch_source():
             result = await normalizer.anormalize(["seizures"], context_field="phenotype")
 
         assert result.mapping["seizures"] == "Ataxia"
@@ -208,18 +204,22 @@ class TestOntologyMapping:
 
     async def test_sync_wrapper(self) -> None:
         embedder = MockOntologyEmbedder(_VECTORS)
-        normalizer = OntologyMapping(ontology="hpo", reranking_model=None)
+        normalizer = OntologyMapping(
+            ontology="hpo", reranking_model=None, embedding_client=embedder,
+        )
 
-        with _patch_clients(embedder):
+        with _patch_source():
             result = normalizer.normalize(["seizures"], context_field="phenotype")
 
         assert result.mapping["seizures"] == "Seizure"
 
     async def test_n_mapped_in_metadata(self) -> None:
         embedder = MockOntologyEmbedder(_VECTORS)
-        normalizer = OntologyMapping(ontology="hpo", reranking_model=None)
+        normalizer = OntologyMapping(
+            ontology="hpo", reranking_model=None, embedding_client=embedder,
+        )
 
-        with _patch_clients(embedder):
+        with _patch_source():
             result = await normalizer.anormalize(
                 ["seizures", "high temperature"], context_field="phenotype"
             )

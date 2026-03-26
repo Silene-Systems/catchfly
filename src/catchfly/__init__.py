@@ -9,6 +9,7 @@ https://github.com/silene-systems/catchfly
 
 import logging
 
+from catchfly._defaults import DEFAULT_EMBEDDING_MODEL, DEFAULT_MODEL
 from catchfly._types import (
     Document,
     ExtractionResult,
@@ -29,11 +30,13 @@ from catchfly.exceptions import (
 )
 from catchfly.pipeline import Pipeline
 
-__version__ = "1.0.3"
+__version__ = "1.1.0"
 
 __all__ = [
     "BudgetExceededError",
     "CatchflyError",
+    "DEFAULT_EMBEDDING_MODEL",
+    "DEFAULT_MODEL",
     "DiscoveryError",
     "Document",
     "ExtractionError",

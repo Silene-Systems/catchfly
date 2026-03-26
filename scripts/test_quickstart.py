@@ -23,7 +23,7 @@ from catchfly.selection import LLMFieldSelector
 # RareArena — rare disease case reports from PMC, mapped to Orphanet
 # This is catchfly's core use case: unstructured clinical text → structured data
 print("Downloading RareArena (rare disease case reports) from HuggingFace...")
-ds = load_dataset("THUMedInfo/RareArena", split="train", streaming=True)
+ds = load_dataset("THUMedInfo/RareArena", data_files="RDC.json", split="train", streaming=True)
 
 N_DOCS = 50
 docs: list[Document] = []

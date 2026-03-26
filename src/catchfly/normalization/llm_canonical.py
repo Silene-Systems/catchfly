@@ -4,15 +4,20 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import Counter
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, PrivateAttr
 
 from catchfly._compat import run_sync
+from catchfly._defaults import DEFAULT_MODEL
+from catchfly._parsing import strip_markdown_fences
 from catchfly._types import NormalizationResult
-from catchfly.exceptions import NormalizationError
-from catchfly.providers.llm import OpenAICompatibleClient
+from catchfly.exceptions import NormalizationError, ProviderError
+
+if TYPE_CHECKING:
+    from catchfly.providers.llm import OpenAICompatibleClient
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +100,24 @@ def _build_hierarchical_system_prompt(
     return _HIERARCHICAL_MERGE_PROMPT.format(field=field) + _format_schema_context(field_metadata)
 
 
+_MAX_VALUE_LENGTH = 200
+"""Truncate individual values to 200 chars in LLM prompts — fits medical
+terms while keeping batch prompts under typical context limits."""
+
+
+def _sanitize_value(value: str) -> str:
+    """Clean a value for safe LLM prompt inclusion.
+
+    Strips control characters, collapses whitespace, and truncates
+    to ``_MAX_VALUE_LENGTH`` characters.
+    """
+    cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", " ", value)
+    cleaned = " ".join(cleaned.split())
+    if len(cleaned) > _MAX_VALUE_LENGTH:
+        cleaned = cleaned[:_MAX_VALUE_LENGTH] + "..."
+    return cleaned
+
+
 def _build_batch_prompt(values: list[str], field: str) -> str:
     values_str = "\n".join(f"  - {v}" for v in values)
     return f'Values for field "{field}":\n{values_str}\n\nGroup these into canonical forms.'
@@ -119,7 +142,7 @@ class LLMCanonicalization(BaseModel):
     run a hierarchical LLM merge to consolidate semantically similar groups.
     """
 
-    model: str = "gpt-5.4-mini"
+    model: str = DEFAULT_MODEL
     batch_size: int = 50
     """50 values per map-reduce batch — fits in a single prompt without truncation."""
     max_values_per_prompt: int = 200
@@ -132,9 +155,25 @@ class LLMCanonicalization(BaseModel):
     hierarchical_merge_rounds: int = 1
     """1 round is usually sufficient; diminishing returns beyond 2."""
 
+    client: Any | None = None
+    """Pre-configured LLM client. If ``None``, a default client is created."""
+
     _usage_callback: Any = PrivateAttr(default=None)
 
     model_config = {"arbitrary_types_allowed": True}
+
+    def _get_client(self) -> Any:
+        """Return the injected client or create a default one."""
+        if self.client is not None:
+            return self.client
+        from catchfly.providers.llm import OpenAICompatibleClient
+
+        return OpenAICompatibleClient(
+            model=self.model,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            usage_callback=self._usage_callback,
+        )
 
     async def anormalize(
         self,
@@ -159,12 +198,7 @@ class LLMCanonicalization(BaseModel):
 
         field_metadata: dict[str, Any] | None = kwargs.get("field_metadata")
 
-        client = OpenAICompatibleClient(
-            model=self.model,
-            base_url=self.base_url,
-            api_key=self.api_key,
-            usage_callback=self._usage_callback,
-        )
+        client = self._get_client()
 
         logger.info(
             "LLMCanonicalization: normalizing %d values (%d unique) for '%s'",
@@ -201,8 +235,16 @@ class LLMCanonicalization(BaseModel):
         field_metadata: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Single-call canonicalization for a batch of values."""
+        # Build sanitized→original mapping so the LLM sees clean values
+        # but the final groups reference the original strings.
+        sanitized_to_originals: dict[str, list[str]] = {}
+        for v in values:
+            s = _sanitize_value(v)
+            sanitized_to_originals.setdefault(s, []).append(v)
+        sanitized_values = list(sanitized_to_originals.keys())
+
         system_prompt = _build_system_prompt(field, field_metadata)
-        user_prompt = _build_batch_prompt(values, field)
+        user_prompt = _build_batch_prompt(sanitized_values, field)
 
         response = await client.acomplete(
             [
@@ -212,7 +254,18 @@ class LLMCanonicalization(BaseModel):
             temperature=self.temperature,
         )
 
-        return self._parse_groups(response.content, values)
+        groups = self._parse_groups(response.content, sanitized_values)
+
+        # Remap members from sanitized back to originals
+        for group in groups:
+            original_members: list[str] = []
+            for member in group["members"]:
+                original_members.extend(
+                    sanitized_to_originals.get(member, [member])
+                )
+            group["members"] = original_members
+
+        return groups
 
     async def _map_reduce(
         self,
@@ -232,10 +285,27 @@ class LLMCanonicalization(BaseModel):
                 min(i + self.batch_size, len(values)),
                 len(values),
             )
-            batch_groups = await self._canonicalize_batch(
-                client, batch, field, field_metadata
-            )
-            all_groups.extend(batch_groups)
+            try:
+                batch_groups = await self._canonicalize_batch(
+                    client, batch, field, field_metadata
+                )
+                all_groups.extend(batch_groups)
+            except (ProviderError, NormalizationError) as e:
+                logger.warning(
+                    "LLMCanonicalization: batch %d-%d failed, "
+                    "values kept as singletons: %s",
+                    i,
+                    min(i + self.batch_size, len(values)),
+                    e,
+                )
+                for v in batch:
+                    all_groups.append(
+                        {
+                            "canonical": v,
+                            "members": [v],
+                            "rationale": "batch failed",
+                        }
+                    )
 
         # Reduce: merge groups with same/similar canonical names (string-based)
         merged = self._merge_groups(all_groups)
@@ -381,11 +451,7 @@ class LLMCanonicalization(BaseModel):
         expected_values: list[str],
     ) -> list[dict[str, Any]]:
         """Parse canonicalization groups from LLM response."""
-        text = content.strip()
-        if text.startswith("```"):
-            lines = text.split("\n")
-            lines = [line for line in lines if not line.strip().startswith("```")]
-            text = "\n".join(lines)
+        text = strip_markdown_fences(content)
 
         try:
             data = json.loads(text)

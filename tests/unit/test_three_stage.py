@@ -260,3 +260,49 @@ class TestThreeStageDiscovery:
         docs = _make_docs(10)
         result = ThreeStageDiscovery._sample(docs, 5)
         assert len(result) == 5
+
+    async def test_discovery_raises_on_empty_schema(self) -> None:
+        """ThreeStageDiscovery should raise DiscoveryError if schema has no fields.
+
+        Previously it silently returned an empty Schema with model=None,
+        causing downstream extraction to crash with AttributeError.
+        """
+
+        class EmptySchemaLLM:
+            async def acomplete(self, messages: list[dict[str, str]], **kw: Any) -> LLMResponse:
+                return LLMResponse(
+                    content=json.dumps({"type": "object", "properties": {}}),
+                    input_tokens=100,
+                    output_tokens=50,
+                )
+
+            async def astructured_complete(self, messages: Any, **kw: Any) -> LLMResponse:
+                return await self.acomplete(messages, **kw)
+
+        mock = EmptySchemaLLM()
+        discovery = ThreeStageDiscovery(model="mock")
+        orig_sp, orig_ts = _patch(mock)  # type: ignore[arg-type]
+        try:
+            with pytest.raises(DiscoveryError):
+                await discovery.adiscover(_make_docs(10), domain_hint="test")
+        finally:
+            _unpatch(orig_sp, orig_ts)
+
+    def test_build_schema_raises_on_empty_properties(self) -> None:
+        """_build_schema raises DiscoveryError when properties is empty."""
+        empty_schema: dict[str, Any] = {"type": "object", "properties": {}}
+        with pytest.raises(DiscoveryError, match="no properties"):
+            ThreeStageDiscovery._build_schema(
+                empty_schema, {}, {"stages_completed": 1}, stage=1
+            )
+
+    def test_build_schema_raises_on_conversion_failure(self) -> None:
+        """_build_schema raises DiscoveryError when Pydantic conversion fails."""
+        bad_schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {"x": "not_a_dict"},
+        }
+        with pytest.raises(DiscoveryError, match="failed to build Pydantic model"):
+            ThreeStageDiscovery._build_schema(
+                bad_schema, {}, {"stages_completed": 2}, stage=2
+            )

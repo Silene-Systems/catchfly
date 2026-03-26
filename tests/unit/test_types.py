@@ -58,6 +58,123 @@ class TestPipelineResult:
         df = result.to_dataframe()
         assert len(df) == 0
 
+    def test_apply_normalizations_with_pydantic_records(self) -> None:
+        class Product(BaseModel):
+            brand: str
+            color: str | None = None
+
+        result = PipelineResult(
+            records=[
+                Product(brand="NIKE", color="red"),
+                Product(brand="nike", color="blue"),
+            ],
+            normalizations={
+                "brand": NormalizationResult(
+                    mapping={"NIKE": "Nike", "nike": "Nike"},
+                ),
+            },
+        )
+        normalized = result.apply_normalizations()
+        assert len(normalized) == 2
+        assert normalized[0]["brand"] == "Nike"
+        assert normalized[1]["brand"] == "Nike"
+        # Non-normalized field unchanged
+        assert normalized[0]["color"] == "red"
+
+    def test_apply_normalizations_with_dict_records(self) -> None:
+        result = PipelineResult(
+            records=[
+                {"city": "NYC", "name": "Alice"},
+                {"city": "New York City", "name": "Bob"},
+            ],
+            normalizations={
+                "city": NormalizationResult(
+                    mapping={"NYC": "New York", "New York City": "New York"},
+                ),
+            },
+        )
+        normalized = result.apply_normalizations()
+        assert normalized[0]["city"] == "New York"
+        assert normalized[1]["city"] == "New York"
+        assert normalized[0]["name"] == "Alice"
+
+    def test_apply_normalizations_with_list_field(self) -> None:
+        class Patient(BaseModel):
+            symptoms: list[str]
+
+        result = PipelineResult(
+            records=[
+                Patient(symptoms=["heart attack", "chest pain", "MI"]),
+            ],
+            normalizations={
+                "symptoms": NormalizationResult(
+                    mapping={
+                        "heart attack": "myocardial infarction",
+                        "MI": "myocardial infarction",
+                        "chest pain": "chest pain",
+                    },
+                ),
+            },
+        )
+        normalized = result.apply_normalizations()
+        assert normalized[0]["symptoms"] == [
+            "myocardial infarction",
+            "chest pain",
+            "myocardial infarction",
+        ]
+
+    def test_apply_normalizations_no_normalizations(self) -> None:
+        result = PipelineResult(
+            records=[{"a": "1"}, {"a": "2"}],
+        )
+        normalized = result.apply_normalizations()
+        assert len(normalized) == 2
+        assert normalized[0] == {"a": "1"}
+
+    def test_apply_normalizations_empty_records(self) -> None:
+        result = PipelineResult()
+        assert result.apply_normalizations() == []
+
+    def test_apply_normalizations_does_not_mutate_records(self) -> None:
+        original = {"brand": "NIKE"}
+        result = PipelineResult(
+            records=[original],
+            normalizations={
+                "brand": NormalizationResult(mapping={"NIKE": "Nike"}),
+            },
+        )
+        result.apply_normalizations()
+        assert original["brand"] == "NIKE"
+
+    def test_normalized_records_property(self) -> None:
+        result = PipelineResult(
+            records=[{"x": "a"}],
+            normalizations={
+                "x": NormalizationResult(mapping={"a": "A"}),
+            },
+        )
+        assert result.normalized_records == result.apply_normalizations()
+
+    def test_apply_normalizations_none_values_skipped(self) -> None:
+        result = PipelineResult(
+            records=[{"brand": None, "color": "red"}],
+            normalizations={
+                "brand": NormalizationResult(mapping={"NIKE": "Nike"}),
+            },
+        )
+        normalized = result.apply_normalizations()
+        assert normalized[0]["brand"] is None
+
+    def test_apply_normalizations_unmapped_values_pass_through(self) -> None:
+        result = PipelineResult(
+            records=[{"brand": "Adidas"}],
+            normalizations={
+                "brand": NormalizationResult(mapping={"NIKE": "Nike"}),
+            },
+        )
+        normalized = result.apply_normalizations()
+        assert normalized[0]["brand"] == "Adidas"
+
 
 class TestUsageReport:
     def test_cost_usd_alias(self) -> None:

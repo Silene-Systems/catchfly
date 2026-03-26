@@ -12,16 +12,17 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, PrivateAttr
 
 from catchfly._compat import run_sync
+from catchfly._defaults import DEFAULT_EMBEDDING_MODEL, DEFAULT_MODEL
+from catchfly._parsing import strip_markdown_fences
 from catchfly._types import NormalizationResult
 from catchfly.exceptions import NormalizationError, ProviderError
 from catchfly.ontology.csv_json import CSVSource, JSONSource
 from catchfly.ontology.hpo import HPOSource
 from catchfly.ontology.index import OntologyIndex
-from catchfly.providers.embeddings import OpenAIEmbeddingClient
-from catchfly.providers.llm import OpenAICompatibleClient
 
 if TYPE_CHECKING:
     from catchfly.ontology.types import OntologyEntry, OntologySource
+    from catchfly.providers.llm import OpenAICompatibleClient
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +62,8 @@ class OntologyMapping(BaseModel):
     """
 
     ontology: str
-    embedding_model: str = "text-embedding-3-small"
-    reranking_model: str | None = "gpt-5.4-mini"
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL
+    reranking_model: str | None = DEFAULT_MODEL
     top_k: int = 5
     """5 nearest neighbors provides sufficient recall without excessive reranking cost."""
     confidence_threshold: float = 0.0
@@ -73,9 +74,40 @@ class OntologyMapping(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
 
+    client: Any | None = None
+    """Pre-configured LLM client for reranking."""
+
+    embedding_client: Any | None = None
+    """Pre-configured embedding client."""
+
     _usage_callback: Any = PrivateAttr(default=None)
 
     model_config = {"arbitrary_types_allowed": True}
+
+    def _get_client(self) -> Any:
+        """Return the injected LLM client or create a default one."""
+        if self.client is not None:
+            return self.client
+        from catchfly.providers.llm import OpenAICompatibleClient
+
+        return OpenAICompatibleClient(
+            model=self.reranking_model,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            usage_callback=self._usage_callback,
+        )
+
+    def _get_embedding_client(self) -> Any:
+        """Return the injected embedding client or create a default one."""
+        if self.embedding_client is not None:
+            return self.embedding_client
+        from catchfly.providers.embeddings import OpenAIEmbeddingClient
+
+        return OpenAIEmbeddingClient(
+            model=self.embedding_model,
+            base_url=self.base_url,
+            api_key=self.api_key,
+        )
 
     async def anormalize(
         self,
@@ -94,15 +126,12 @@ class OntologyMapping(BaseModel):
         entries = source.load()
         if not entries:
             raise NormalizationError(
-                f"Ontology '{self.ontology}' loaded 0 entries"
+                f"Ontology '{self.ontology}' loaded 0 entries. "
+                f"Check that the ontology path exists and contains valid data."
             )
 
         # 2. Build embedding index
-        embed_client = OpenAIEmbeddingClient(
-            model=self.embedding_model,
-            base_url=self.base_url,
-            api_key=self.api_key,
-        )
+        embed_client = self._get_embedding_client()
         cache_path = self._resolve_cache_path()
         index = OntologyIndex(entries, embed_client, cache_path=cache_path)
         await index.build()
@@ -121,12 +150,7 @@ class OntologyMapping(BaseModel):
 
         # 5. LLM reranking (optional)
         if self.reranking_model:
-            llm_client = OpenAICompatibleClient(
-                model=self.reranking_model,
-                base_url=self.base_url,
-                api_key=self.api_key,
-                usage_callback=self._usage_callback,
-            )
+            llm_client = self._get_client()
             matches = await self._rerank_batch(
                 llm_client, unique_values, nn_results, context_field
             )
@@ -296,11 +320,7 @@ class OntologyMapping(BaseModel):
         candidates: list[tuple[OntologyEntry, float]],
     ) -> _OntologyMatch | None:
         """Parse LLM reranking response."""
-        text = content.strip()
-        if text.startswith("```"):
-            lines = text.split("\n")
-            lines = [ln for ln in lines if not ln.strip().startswith("```")]
-            text = "\n".join(lines)
+        text = strip_markdown_fences(content)
 
         try:
             data = json.loads(text)

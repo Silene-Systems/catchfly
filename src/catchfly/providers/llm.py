@@ -9,6 +9,7 @@ import os
 import time
 from typing import Any, Protocol, runtime_checkable
 
+from catchfly._defaults import DEFAULT_MODEL
 from catchfly.exceptions import ProviderError
 
 logger = logging.getLogger(__name__)
@@ -138,7 +139,7 @@ class OpenAICompatibleClient:
 
     def __init__(
         self,
-        model: str = "gpt-5.4-mini",
+        model: str = DEFAULT_MODEL,
         base_url: str | None = None,
         api_key: str | None = None,
         max_retries: int = _DEFAULT_MAX_RETRIES,

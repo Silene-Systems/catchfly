@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel, PrivateAttr
 
 from catchfly._compat import run_sync
+from catchfly._defaults import DEFAULT_MODEL
 from catchfly._types import NormalizationResult
 
 logger = logging.getLogger(__name__)
@@ -144,7 +145,7 @@ class CascadeNormalization(BaseModel):
         cls,
         *,
         dictionary: dict[str, str] | None = None,
-        model: str = "gpt-5.4-mini",
+        model: str = DEFAULT_MODEL,
         ontology: str | None = None,
         base_url: str | None = None,
         api_key: str | None = None,

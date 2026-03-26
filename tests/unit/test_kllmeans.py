@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import patch
 
 import numpy as np
 
@@ -93,16 +92,12 @@ class TestKLLMeansClustering:
             num_clusters=2,
             num_iterations=5,
             summarize_every=2,
+            client=mock_llm,
+            embedding_client=embedder,
         )
 
-        embed_patch = "catchfly.normalization.kllmeans.OpenAIEmbeddingClient"
-        llm_patch = "catchfly.normalization.kllmeans.OpenAICompatibleClient"
-        with (
-            patch(embed_patch, return_value=embedder),
-            patch(llm_patch, return_value=mock_llm),
-        ):
-            all_values = [v for members in groups.values() for v in members]
-            result = await normalizer.anormalize(all_values, context_field="city")
+        all_values = [v for members in groups.values() for v in members]
+        result = await normalizer.anormalize(all_values, context_field="city")
 
         assert len(result.mapping) == 6
         # NY variants should map to same canonical
@@ -120,16 +115,14 @@ class TestKLLMeansClustering:
             num_clusters=2,
             num_iterations=20,
             summarize_every=100,  # disable LLM summaries
+            client=mock_llm,
+            embedding_client=embedder,
         )
 
-        with (
-            patch("catchfly.normalization.kllmeans.OpenAIEmbeddingClient", return_value=embedder),
-            patch("catchfly.normalization.kllmeans.OpenAICompatibleClient", return_value=mock_llm),
-        ):
-            result = await normalizer.anormalize(
-                ["a1", "a2", "a3", "b1", "b2", "b3"],
-                context_field="test",
-            )
+        result = await normalizer.anormalize(
+            ["a1", "a2", "a3", "b1", "b2", "b3"],
+            context_field="test",
+        )
 
         assert len(result.mapping) == 6
         assert result.metadata["k"] == 2

@@ -15,6 +15,8 @@ from typing import Any
 from pydantic import BaseModel, PrivateAttr
 
 from catchfly._compat import run_sync
+from catchfly._defaults import DEFAULT_MODEL
+from catchfly._parsing import strip_markdown_fences
 from catchfly._types import Document, Schema
 from catchfly.discovery.single_pass import SinglePassDiscovery
 from catchfly.exceptions import DiscoveryError, ProviderError, SchemaError
@@ -69,7 +71,7 @@ class ThreeStageDiscovery(BaseModel):
     Stage 3: Schema expanded against 50-100 docs (add recurring, flag rare)
     """
 
-    model: str = "gpt-5.4-mini"
+    model: str = DEFAULT_MODEL
     stage1_samples: int = 3
     """Stage 1 uses few docs (2-3) to avoid over-fitting the initial schema."""
     stage2_samples: int = 10
@@ -87,10 +89,24 @@ class ThreeStageDiscovery(BaseModel):
     api_key: str | None = None
     temperature: float = 0.3
     """Low temperature for deterministic schema proposals."""
+    client: Any | None = None
+    """Pre-configured LLM client. If ``None``, a default client is created
+    from ``model``, ``base_url``, and ``api_key``."""
 
     _usage_callback: Any = PrivateAttr(default=None)
 
     model_config = {"arbitrary_types_allowed": True}
+
+    def _get_client(self) -> Any:
+        """Return the injected client or create a default one."""
+        if self.client is not None:
+            return self.client
+        return OpenAICompatibleClient(
+            model=self.model,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            usage_callback=self._usage_callback,
+        )
 
     async def adiscover(
         self,
@@ -103,12 +119,7 @@ class ThreeStageDiscovery(BaseModel):
         if not documents:
             raise DiscoveryError("No documents provided for schema discovery.")
 
-        client = OpenAICompatibleClient(
-            model=self.model,
-            base_url=self.base_url,
-            api_key=self.api_key,
-            usage_callback=self._usage_callback,
-        )
+        client = self._get_client()
 
         # --- Stage 1: Initial schema ---
         logger.info(
@@ -313,11 +324,7 @@ class ThreeStageDiscovery(BaseModel):
     @staticmethod
     def _parse_changes(content: str) -> dict[str, Any]:
         """Parse schema change proposals from LLM response."""
-        text = content.strip()
-        if text.startswith("```"):
-            lines = text.split("\n")
-            lines = [line for line in lines if not line.strip().startswith("```")]
-            text = "\n".join(lines)
+        text = strip_markdown_fences(content)
 
         try:
             data = json.loads(text)
@@ -369,15 +376,22 @@ class ThreeStageDiscovery(BaseModel):
         """Build final Schema with discovery report in metadata."""
         from catchfly.schema.converters import json_schema_to_pydantic
 
-        model = None
+        properties = json_schema.get("properties", {})
+        if not properties:
+            raise DiscoveryError(
+                f"ThreeStageDiscovery produced a schema with no properties "
+                f"after stage {stage}. Try providing `suggested_fields` or "
+                f"a `domain_hint` to guide discovery."
+            )
+
         try:
             model = json_schema_to_pydantic(json_schema, "DiscoveredSchema")
         except (SchemaError, ValueError, TypeError) as e:
-            logger.warning(
-                "ThreeStageDiscovery: could not build Pydantic model: %s",
-                e,
-                exc_info=True,
-            )
+            raise DiscoveryError(
+                f"ThreeStageDiscovery: failed to build Pydantic model after "
+                f"stage {stage}. The discovered schema may contain "
+                f"unsupported types: {e}"
+            ) from e
 
         lineage = [f"ThreeStageDiscovery:stage{stage}"]
 

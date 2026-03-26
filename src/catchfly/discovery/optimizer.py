@@ -15,6 +15,8 @@ from typing import Any
 from pydantic import BaseModel, PrivateAttr
 
 from catchfly._compat import run_sync
+from catchfly._defaults import DEFAULT_MODEL
+from catchfly._parsing import strip_markdown_fences
 from catchfly._types import Document, Schema
 from catchfly.exceptions import DiscoveryError, ProviderError
 from catchfly.providers.llm import OpenAICompatibleClient
@@ -88,7 +90,7 @@ class SchemaOptimizer(BaseModel):
     used as prompt context for LLMCanonicalization normalization.
     """
 
-    model: str = "gpt-5.4-mini"
+    model: str = DEFAULT_MODEL
     num_iterations: int = 5
     """5 iterations balances enrichment quality vs LLM cost (PARSE paper default)."""
     max_docs_per_iteration: int = 10
@@ -101,10 +103,24 @@ class SchemaOptimizer(BaseModel):
     api_key: str | None = None
     temperature: float = 0.3
     """Low temperature for deterministic enrichment suggestions."""
+    client: Any | None = None
+    """Pre-configured LLM client. If ``None``, a default client is created
+    from ``model``, ``base_url``, and ``api_key``."""
 
     _usage_callback: Any = PrivateAttr(default=None)
 
     model_config = {"arbitrary_types_allowed": True}
+
+    def _get_client(self) -> Any:
+        """Return the injected client or create a default one."""
+        if self.client is not None:
+            return self.client
+        return OpenAICompatibleClient(
+            model=self.model,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            usage_callback=self._usage_callback,
+        )
 
     async def aoptimize(
         self,
@@ -128,12 +144,7 @@ class SchemaOptimizer(BaseModel):
         working_schema = self._normalize_schema(schema)
         json_schema = working_schema.json_schema
 
-        client = OpenAICompatibleClient(
-            model=self.model,
-            base_url=self.base_url,
-            api_key=self.api_key,
-            usage_callback=self._usage_callback,
-        )
+        client = self._get_client()
 
         field_metadata: dict[str, dict[str, Any]] = dict(working_schema.field_metadata)
         lineage = list(working_schema.lineage)
@@ -315,11 +326,7 @@ class SchemaOptimizer(BaseModel):
     @staticmethod
     def _parse_enrichment(content: str) -> dict[str, Any]:
         """Parse enrichment JSON from LLM response."""
-        text = content.strip()
-        if text.startswith("```"):
-            lines = text.split("\n")
-            lines = [line for line in lines if not line.strip().startswith("```")]
-            text = "\n".join(lines)
+        text = strip_markdown_fences(content)
 
         data = json.loads(text)
         if not isinstance(data, dict):

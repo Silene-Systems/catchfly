@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any
 
 import pytest
 
-from catchfly.exceptions import NormalizationError
+from catchfly.exceptions import NormalizationError, ProviderError
 from catchfly.normalization.llm_canonical import (
     LLMCanonicalization,
-    _build_system_prompt,
+    _build_batch_prompt,
     _build_hierarchical_system_prompt,
+    _build_system_prompt,
+    _sanitize_value,
 )
 from catchfly.providers.llm import LLMResponse
 
@@ -69,27 +70,13 @@ class MockCanonicalizationLLM:
         return await self.acomplete(messages, **kwargs)
 
 
-@contextmanager
-def _patch_client(mock_llm: MockCanonicalizationLLM) -> Iterator[None]:
-    """Temporarily replace OpenAICompatibleClient with *mock_llm*."""
-    import catchfly.normalization.llm_canonical as mod
-
-    original = mod.OpenAICompatibleClient
-    mod.OpenAICompatibleClient = lambda **kw: mock_llm  # type: ignore[assignment,misc]
-    try:
-        yield
-    finally:
-        mod.OpenAICompatibleClient = original  # type: ignore[assignment]
-
-
 class TestLLMCanonicalization:
     async def test_basic_normalization(self) -> None:
         mock_llm = MockCanonicalizationLLM()
-        normalizer = LLMCanonicalization(model="mock")
+        normalizer = LLMCanonicalization(model="mock", client=mock_llm)
 
-        with _patch_client(mock_llm):
-            values = ["New York", "NYC", "NY", "Los Angeles", "LA", "L.A."]
-            result = await normalizer.anormalize(values, context_field="city")
+        values = ["New York", "NYC", "NY", "Los Angeles", "LA", "L.A."]
+        result = await normalizer.anormalize(values, context_field="city")
 
         assert result.mapping["NYC"] == "New York"
         assert result.mapping["LA"] == "Los Angeles"
@@ -107,10 +94,9 @@ class TestLLMCanonicalization:
 
     async def test_explain(self) -> None:
         mock_llm = MockCanonicalizationLLM()
-        normalizer = LLMCanonicalization(model="mock")
+        normalizer = LLMCanonicalization(model="mock", client=mock_llm)
 
-        with _patch_client(mock_llm):
-            result = await normalizer.anormalize(["NYC", "New York"], context_field="city")
+        result = await normalizer.anormalize(["NYC", "New York"], context_field="city")
 
         explanation = result.explain("NYC")
         assert "New York" in explanation
@@ -123,12 +109,12 @@ class TestLLMCanonicalization:
             ]
         )
         normalizer = LLMCanonicalization(
-            model="mock", max_values_per_prompt=5, batch_size=3, hierarchical_merge=False
+            model="mock", max_values_per_prompt=5, batch_size=3, hierarchical_merge=False,
+            client=mock_llm,
         )
 
-        with _patch_client(mock_llm):
-            values = [f"val_{i}" for i in range(10)]
-            result = await normalizer.anormalize(values, context_field="test")
+        values = [f"val_{i}" for i in range(10)]
+        result = await normalizer.anormalize(values, context_field="test")
 
         # All values should be mapped (ungrouped ones become singletons)
         assert len(result.mapping) >= len(set(values))
@@ -205,12 +191,11 @@ class TestLLMCanonicalization:
 
     def test_sync_wrapper(self) -> None:
         mock_llm = MockCanonicalizationLLM()
-        normalizer = LLMCanonicalization(model="mock")
+        normalizer = LLMCanonicalization(model="mock", client=mock_llm)
 
-        with _patch_client(mock_llm):
-            result = normalizer.normalize(
-                ["NYC", "New York", "LA", "Los Angeles"], context_field="city"
-            )
+        result = normalizer.normalize(
+            ["NYC", "New York", "LA", "Los Angeles"], context_field="city"
+        )
 
         assert result.mapping["NYC"] == "New York"
 
@@ -264,16 +249,15 @@ class TestSchemaAwareIntegration:
     async def test_schema_context_reaches_llm(self) -> None:
         """When field_metadata is passed, the system prompt includes schema context."""
         mock_llm = MockCanonicalizationLLM()
-        normalizer = LLMCanonicalization(model="mock")
+        normalizer = LLMCanonicalization(model="mock", client=mock_llm)
 
-        with _patch_client(mock_llm):
-            metadata = {
-                "description": "Type of jewelry product",
-                "examples": ["Rings", "Necklaces"],
-            }
-            await normalizer.anormalize(
-                ["NYC", "New York"], context_field="product_type", field_metadata=metadata
-            )
+        metadata = {
+            "description": "Type of jewelry product",
+            "examples": ["Rings", "Necklaces"],
+        }
+        await normalizer.anormalize(
+            ["NYC", "New York"], context_field="product_type", field_metadata=metadata
+        )
 
         assert mock_llm.call_count == 1
         system_msg = mock_llm.captured_messages[0][0]["content"]
@@ -284,10 +268,9 @@ class TestSchemaAwareIntegration:
     async def test_no_metadata_no_schema_context(self) -> None:
         """When field_metadata is not passed, system prompt has no schema context."""
         mock_llm = MockCanonicalizationLLM()
-        normalizer = LLMCanonicalization(model="mock")
+        normalizer = LLMCanonicalization(model="mock", client=mock_llm)
 
-        with _patch_client(mock_llm):
-            await normalizer.anormalize(["NYC", "New York"], context_field="city")
+        await normalizer.anormalize(["NYC", "New York"], context_field="city")
 
         system_msg = mock_llm.captured_messages[0][0]["content"]
         assert "Schema context" not in system_msg
@@ -391,12 +374,12 @@ class TestHierarchicalMerge:
             responses=[batch_response, batch_response, batch_response, batch_response, merge_response]
         )
         normalizer = LLMCanonicalization(
-            model="mock", max_values_per_prompt=3, batch_size=2, hierarchical_merge=True
+            model="mock", max_values_per_prompt=3, batch_size=2, hierarchical_merge=True,
+            client=mock_llm,
         )
 
-        with _patch_client(mock_llm):
-            values = [f"val_{i}" for i in range(8)]
-            result = await normalizer.anormalize(values, context_field="product_type")
+        values = [f"val_{i}" for i in range(8)]
+        result = await normalizer.anormalize(values, context_field="product_type")
 
         # Hierarchical merge should have been called (more than just batch calls)
         assert mock_llm.call_count > 4
@@ -409,12 +392,12 @@ class TestHierarchicalMerge:
             ]
         )
         normalizer = LLMCanonicalization(
-            model="mock", max_values_per_prompt=3, batch_size=2, hierarchical_merge=False
+            model="mock", max_values_per_prompt=3, batch_size=2, hierarchical_merge=False,
+            client=mock_llm,
         )
 
-        with _patch_client(mock_llm):
-            values = [f"val_{i}" for i in range(8)]
-            await normalizer.anormalize(values, context_field="test")
+        values = [f"val_{i}" for i in range(8)]
+        await normalizer.anormalize(values, context_field="test")
 
         # 4 batch calls (8 values / batch_size=2), no hierarchical merge call
         assert mock_llm.call_count == 4
@@ -428,12 +411,12 @@ class TestHierarchicalMerge:
             ]
         )
         normalizer = LLMCanonicalization(
-            model="mock", max_values_per_prompt=200, hierarchical_merge=True
+            model="mock", max_values_per_prompt=200, hierarchical_merge=True,
+            client=mock_llm,
         )
 
-        with _patch_client(mock_llm):
-            values = ["a1", "a2", "b1", "b2"]
-            await normalizer.anormalize(values, context_field="test")
+        values = ["a1", "a2", "b1", "b2"]
+        await normalizer.anormalize(values, context_field="test")
 
         # Only 1 call — single batch, no map-reduce, no hierarchical merge
         assert mock_llm.call_count == 1
@@ -452,12 +435,12 @@ class TestHierarchicalMerge:
             responses=[batch_groups, batch_groups, batch_groups, merge_groups]
         )
         normalizer = LLMCanonicalization(
-            model="mock", max_values_per_prompt=3, batch_size=2, hierarchical_merge=True
+            model="mock", max_values_per_prompt=3, batch_size=2, hierarchical_merge=True,
+            client=mock_llm,
         )
 
-        with _patch_client(mock_llm):
-            values = [f"val_{i}" for i in range(6)]
-            result = await normalizer.anormalize(values, context_field="test")
+        values = [f"val_{i}" for i in range(6)]
+        result = await normalizer.anormalize(values, context_field="test")
 
         # Every input value must appear in the mapping
         for v in set(values):
@@ -477,17 +460,98 @@ class TestHierarchicalMerge:
             responses=[batch_groups, batch_groups, merge_groups]
         )
         normalizer = LLMCanonicalization(
-            model="mock", max_values_per_prompt=3, batch_size=2, hierarchical_merge=True
+            model="mock", max_values_per_prompt=3, batch_size=2, hierarchical_merge=True,
+            client=mock_llm,
         )
 
-        with _patch_client(mock_llm):
-            metadata = {"description": "Product category"}
-            values = [f"val_{i}" for i in range(4)]
-            await normalizer.anormalize(
-                values, context_field="product_type", field_metadata=metadata
-            )
+        metadata = {"description": "Product category"}
+        values = [f"val_{i}" for i in range(4)]
+        await normalizer.anormalize(
+            values, context_field="product_type", field_metadata=metadata
+        )
 
         # The last call is the hierarchical merge — check its system prompt
         merge_system_msg = mock_llm.captured_messages[-1][0]["content"]
         assert "data consolidation assistant" in merge_system_msg
         assert "Product category" in merge_system_msg
+
+
+class TestValueSanitization:
+    def test_truncates_long_values(self) -> None:
+        long_val = "a" * 500
+        result = _sanitize_value(long_val)
+        assert len(result) == 203  # 200 + "..."
+        assert result.endswith("...")
+
+    def test_strips_control_characters(self) -> None:
+        dirty = "hello\x00world\x1ftest"
+        result = _sanitize_value(dirty)
+        assert "\x00" not in result
+        assert "\x1f" not in result
+        assert "hello" in result
+        assert "world" in result
+
+    def test_collapses_whitespace(self) -> None:
+        result = _sanitize_value("  multiple   spaces   here  ")
+        assert result == "multiple spaces here"
+
+    def test_medical_term_with_special_chars(self) -> None:
+        term = "Ehlers-Danlos syndrome (hypermobility type) / EDS-HT"
+        result = _sanitize_value(term)
+        assert result == term  # preserved — no control chars, under limit
+
+    def test_build_batch_prompt_no_control_chars(self) -> None:
+        """Prompt builder output is clean when given clean values."""
+        values = ["normal value", "another one"]
+        prompt = _build_batch_prompt(values, "symptoms")
+        assert "normal value" in prompt
+        assert "\x00" not in prompt
+
+
+class TestBatchResilience:
+    async def test_failing_batch_produces_singletons(self) -> None:
+        """A failing batch produces singletons instead of crashing."""
+        call_count = 0
+
+        class FailOnSecondBatch:
+            captured_messages: list[list[dict[str, str]]] = []
+
+            async def acomplete(
+                self, messages: list[dict[str, str]], **kwargs: Any
+            ) -> LLMResponse:
+                nonlocal call_count
+                self.captured_messages.append(messages)
+                call_count += 1
+                if call_count == 2:
+                    raise ProviderError("Simulated 400 Bad Request")
+                return LLMResponse(
+                    content=json.dumps(
+                        {
+                            "groups": [
+                                {
+                                    "canonical": "group",
+                                    "members": ["group"],
+                                    "rationale": "ok",
+                                }
+                            ]
+                        }
+                    ),
+                    input_tokens=100,
+                    output_tokens=50,
+                )
+
+        mock_llm = FailOnSecondBatch()
+        normalizer = LLMCanonicalization(
+            model="mock",
+            max_values_per_prompt=3,
+            batch_size=2,
+            hierarchical_merge=False,
+            client=mock_llm,
+        )
+
+        values = [f"val_{i}" for i in range(6)]
+        result = await normalizer.anormalize(values, context_field="test")
+
+        # All values should still be in the mapping
+        for v in set(values):
+            assert v in result.mapping

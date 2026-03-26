@@ -10,6 +10,8 @@ from typing import Any
 from pydantic import BaseModel, PrivateAttr
 
 from catchfly._compat import run_sync
+from catchfly._defaults import DEFAULT_MODEL
+from catchfly._parsing import strip_markdown_fences
 from catchfly._types import Document, Schema
 from catchfly.exceptions import DiscoveryError, SchemaError
 from catchfly.providers.llm import LLMResponse, OpenAICompatibleClient
@@ -80,7 +82,7 @@ class SinglePassDiscovery(BaseModel):
     to propose a JSON Schema for structured extraction.
     """
 
-    model: str = "gpt-5.4-mini"
+    model: str = DEFAULT_MODEL
     num_samples: int = 5
     """5 samples provides good schema coverage without excessive prompt length."""
     max_doc_chars: int = 3000
@@ -90,14 +92,28 @@ class SinglePassDiscovery(BaseModel):
     """Maximum number of fields in the discovered schema. None = no limit."""
     suggested_fields: list[str] | None = None
     """Field names to include in the schema. LLM may add others if found in documents."""
-    temperature: float = 0.7
-    """Higher temperature encourages discovering diverse field types."""
+    temperature: float = 0.3
+    """Low temperature for deterministic schema proposals."""
     base_url: str | None = None
     api_key: str | None = None
+    client: Any | None = None
+    """Pre-configured LLM client. If ``None``, a default client is created
+    from ``model``, ``base_url``, and ``api_key``."""
 
     _usage_callback: Any = PrivateAttr(default=None)
 
     model_config = {"arbitrary_types_allowed": True}
+
+    def _get_client(self) -> Any:
+        """Return the injected client or create a default one."""
+        if self.client is not None:
+            return self.client
+        return OpenAICompatibleClient(
+            model=self.model,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            usage_callback=self._usage_callback,
+        )
 
     async def adiscover(
         self,
@@ -122,12 +138,7 @@ class SinglePassDiscovery(BaseModel):
         )
 
         # Build prompt and call LLM
-        client = OpenAICompatibleClient(
-            model=self.model,
-            base_url=self.base_url,
-            api_key=self.api_key,
-            usage_callback=self._usage_callback,
-        )
+        client = self._get_client()
 
         user_content = _build_user_prompt(
             sample,
@@ -188,12 +199,7 @@ class SinglePassDiscovery(BaseModel):
     def _parse_schema(content: str) -> dict[str, Any]:
         """Parse JSON Schema from LLM response content."""
         # Strip markdown code fences if present
-        text = content.strip()
-        if text.startswith("```"):
-            lines = text.split("\n")
-            # Remove first and last lines (code fence markers)
-            lines = [line for line in lines if not line.strip().startswith("```")]
-            text = "\n".join(lines)
+        text = strip_markdown_fences(content)
 
         try:
             schema = json.loads(text)

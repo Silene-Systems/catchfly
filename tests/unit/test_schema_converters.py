@@ -129,6 +129,53 @@ class TestJsonSchemaToPydantic:
         instance = model(value="hello")
         assert instance.value == "hello"  # type: ignore[attr-defined]
 
+    def test_required_field_accepts_none(self) -> None:
+        """Required fields in discovered schemas should accept None.
+
+        LLMs commonly return null for fields that don't appear in a
+        particular document (e.g., patient_age when age is not mentioned).
+        Required means 'present in most documents', not 'never null'.
+        """
+        schema = {
+            "type": "object",
+            "properties": {
+                "patient_age": {"type": "integer"},
+                "diagnosis": {"type": "string"},
+            },
+            "required": ["patient_age", "diagnosis"],
+        }
+        model = json_schema_to_pydantic(schema, "NullableRequired")
+
+        # None should be accepted on required fields
+        instance = model(patient_age=None, diagnosis=None)
+        assert instance.patient_age is None  # type: ignore[attr-defined]
+        assert instance.diagnosis is None  # type: ignore[attr-defined]
+
+        # Normal values should still work
+        instance2 = model(patient_age=42, diagnosis="pneumonia")
+        assert instance2.patient_age == 42  # type: ignore[attr-defined]
+
+    def test_required_field_still_required(self) -> None:
+        """Required fields must be provided — omitting them should raise."""
+        schema = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "age": {"type": "integer"},
+            },
+            "required": ["name"],
+        }
+        model = json_schema_to_pydantic(schema, "StillRequired")
+
+        # Omitting required field should raise
+        with pytest.raises(Exception):  # noqa: B017 — ValidationError
+            model()
+
+        # Omitting optional field should be fine
+        instance = model(name="Alice")
+        assert instance.name == "Alice"  # type: ignore[attr-defined]
+        assert instance.age is None  # type: ignore[attr-defined]
+
     def test_object_without_properties(self) -> None:
         """Object type without properties becomes dict."""
         schema = {

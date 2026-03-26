@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 import json
-from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from unittest.mock import patch
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 import numpy as np
 from pydantic import BaseModel
@@ -164,43 +160,6 @@ def _make_clustered_embeddings(
     return embeddings
 
 
-@contextmanager
-def _patch_llm_canonical(mock_llm: Any) -> Iterator[None]:
-    """Temporarily replace OpenAICompatibleClient in llm_canonical."""
-    import catchfly.normalization.llm_canonical as mod
-
-    original = mod.OpenAICompatibleClient
-    mod.OpenAICompatibleClient = lambda **kw: mock_llm  # type: ignore[assignment,misc]
-    try:
-        yield
-    finally:
-        mod.OpenAICompatibleClient = original  # type: ignore[assignment]
-
-
-@contextmanager
-def _patch_discovery(mock_llm: Any) -> Iterator[None]:
-    """Temporarily replace OpenAICompatibleClient in single_pass."""
-    import catchfly.discovery.single_pass as mod
-
-    original = mod.OpenAICompatibleClient
-    mod.OpenAICompatibleClient = lambda **kw: mock_llm  # type: ignore[assignment,misc]
-    try:
-        yield
-    finally:
-        mod.OpenAICompatibleClient = original  # type: ignore[assignment]
-
-
-@contextmanager
-def _patch_extraction(mock_llm: Any) -> Iterator[None]:
-    """Temporarily replace OpenAICompatibleClient in llm_direct."""
-    import catchfly.extraction.llm_direct as mod
-
-    original = mod.OpenAICompatibleClient
-    mod.OpenAICompatibleClient = lambda **kw: mock_llm  # type: ignore[assignment,misc]
-    try:
-        yield
-    finally:
-        mod.OpenAICompatibleClient = original  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -351,10 +310,9 @@ class TestNormalizerCompliance:
         mock_llm = _MockLLMForCanonicalization(
             list(set(NORMALIZATION_VALUES))
         )
-        normalizer = LLMCanonicalization(model="mock")
+        normalizer = LLMCanonicalization(model="mock", client=mock_llm)
 
-        with _patch_llm_canonical(mock_llm):
-            await check_normalizer_compliance(normalizer, NORMALIZATION_VALUES)
+        await check_normalizer_compliance(normalizer, NORMALIZATION_VALUES)
 
     async def test_kllmeans_clustering(self) -> None:
         mock_llm = _MockKLLMeansLLM()
@@ -364,19 +322,11 @@ class TestNormalizerCompliance:
             num_clusters=2,
             num_iterations=3,
             summarize_every=100,  # disable LLM summaries during compliance check
+            client=mock_llm,
+            embedding_client=mock_embedder,
         )
 
-        with (
-            patch(
-                "catchfly.normalization.kllmeans.OpenAIEmbeddingClient",
-                return_value=mock_embedder,
-            ),
-            patch(
-                "catchfly.normalization.kllmeans.OpenAICompatibleClient",
-                return_value=mock_llm,
-            ),
-        ):
-            await check_normalizer_compliance(normalizer, NORMALIZATION_VALUES)
+        await check_normalizer_compliance(normalizer, NORMALIZATION_VALUES)
 
 
 # ---------------------------------------------------------------------------
@@ -389,10 +339,9 @@ class TestDiscoveryCompliance:
 
     async def test_single_pass_discovery(self) -> None:
         mock_llm = _MockLLMForDiscovery()
-        strategy = SinglePassDiscovery(model="mock")
+        strategy = SinglePassDiscovery(model="mock", client=mock_llm)
 
-        with _patch_discovery(mock_llm):
-            await check_discovery_compliance(strategy, SAMPLE_DOCS)
+        await check_discovery_compliance(strategy, SAMPLE_DOCS)
 
 
 # ---------------------------------------------------------------------------
@@ -405,7 +354,6 @@ class TestExtractionCompliance:
 
     async def test_llm_direct_extraction(self) -> None:
         mock_llm = _MockLLMForExtraction({"name": "Alice", "score": 95})
-        extractor = LLMDirectExtraction(model="mock", max_retries=0)
+        extractor = LLMDirectExtraction(model="mock", max_retries=0, client=mock_llm)
 
-        with _patch_extraction(mock_llm):
-            await check_extraction_compliance(extractor, SimpleRecord, SAMPLE_DOCS)
+        await check_extraction_compliance(extractor, SimpleRecord, SAMPLE_DOCS)

@@ -45,8 +45,13 @@ def json_schema_to_pydantic(
         python_type = _resolve_type(field_schema, field_name, name)
         is_required = field_name in required
 
+        # All fields are nullable — even "required" ones.  In discovered
+        # schemas "required" means "present in most documents", not "value
+        # is never null".  LLMs commonly return null for fields that don't
+        # appear in a particular document and strict non-nullable types
+        # cause unnecessary validation failures + retries.
         if is_required:
-            field_definitions[field_name] = (python_type, ...)
+            field_definitions[field_name] = (python_type | None, ...)
         else:
             field_definitions[field_name] = (python_type | None, None)
 
@@ -69,6 +74,12 @@ def _resolve_type(
     Handles standard JSON Schema types, union types (e.g. ["string", "null"]
     from Mistral/OpenAI), anyOf/oneOf constructs, and nested objects.
     """
+    if not isinstance(field_schema, dict):
+        raise SchemaError(
+            f"Invalid schema for field '{field_name}' in '{parent_name}': "
+            f"expected a dict, got {type(field_schema).__name__}"
+        )
+
     # Handle enum
     if "enum" in field_schema:
         return str

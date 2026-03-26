@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
 from catchfly._compat import run_sync
-from catchfly._types import Schema
+
+if TYPE_CHECKING:
+    from catchfly._types import Schema
 
 logger = logging.getLogger(__name__)
 
