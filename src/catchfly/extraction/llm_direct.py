@@ -12,11 +12,11 @@ from pydantic import BaseModel, PrivateAttr, ValidationError
 from catchfly._compat import run_sync
 from catchfly._defaults import DEFAULT_MODEL
 from catchfly._parsing import strip_markdown_fences
-from catchfly.schema.converters import resolve_refs
 from catchfly._types import Document, ExtractionResult, RecordProvenance
 from catchfly.exceptions import ExtractionError
 from catchfly.extraction.chunking import chunk_document
 from catchfly.providers.llm import LLMResponse, OpenAICompatibleClient
+from catchfly.schema.converters import resolve_refs
 
 logger = logging.getLogger(__name__)
 

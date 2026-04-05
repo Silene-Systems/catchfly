@@ -66,7 +66,9 @@ def resolve_refs(schema: dict[str, Any], *, _max_depth: int = 10) -> dict[str, A
                 result[key] = value
         return result
 
-    return _resolve(schema)
+    result = _resolve(schema)
+    assert isinstance(result, dict)  # top-level input is always a dict
+    return result
 
 
 def json_schema_to_pydantic(
