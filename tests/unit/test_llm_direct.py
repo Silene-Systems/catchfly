@@ -226,6 +226,106 @@ class TestLLMDirectExtraction:
         finally:
             _unpatch_extraction()
 
+    def test_coerce_nulls_nested_object(self) -> None:
+        """_coerce_nulls recurses into nested objects."""
+        data = {"patient": {"name": "Jan", "tests": None, "notes": None}}
+        schema = {
+            "properties": {
+                "patient": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "tests": {"type": "array", "items": {"type": "string"}},
+                        "notes": {"type": "object"},
+                    },
+                },
+            },
+        }
+        result = LLMDirectExtraction._coerce_nulls(data, schema)
+        assert result["patient"]["tests"] == []
+        assert result["patient"]["notes"] == {}
+
+    def test_coerce_nulls_array_items(self) -> None:
+        """_coerce_nulls recurses into array item objects."""
+        data = {
+            "symptoms": [
+                {"name": "fever", "related_conditions": None},
+                {"name": "cough", "related_conditions": None},
+            ],
+        }
+        schema = {
+            "properties": {
+                "symptoms": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "related_conditions": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                        },
+                    },
+                },
+            },
+        }
+        result = LLMDirectExtraction._coerce_nulls(data, schema)
+        assert result["symptoms"][0]["related_conditions"] == []
+        assert result["symptoms"][1]["related_conditions"] == []
+
+    def test_coerce_nulls_top_level_unchanged(self) -> None:
+        """Top-level coercion still works after refactor."""
+        data = {"tags": None, "meta": None, "name": "test"}
+        schema = {
+            "properties": {
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "meta": {"type": "object"},
+                "name": {"type": "string"},
+            },
+        }
+        result = LLMDirectExtraction._coerce_nulls(data, schema)
+        assert result["tags"] == []
+        assert result["meta"] == {}
+        assert result["name"] == "test"
+
+    async def test_extract_nested_pydantic_model(self) -> None:
+        """Full extraction with nested Pydantic model (PatientFindings/Symptom)."""
+
+        class Symptom(BaseModel):
+            name: str
+            present: bool
+
+        class PatientFindings(BaseModel):
+            patient_id: str
+            symptoms: list[Symptom]
+
+        response_json = json.dumps(
+            {
+                "patient_id": "P1",
+                "symptoms": [
+                    {"name": "splenomegaly", "present": True},
+                    {"name": "fever", "present": False},
+                ],
+            }
+        )
+        mock_llm = MockExtractionLLM(responses=[response_json])
+        extractor = LLMDirectExtraction(model="mock", max_retries=0)
+        _patch_extraction(extractor, mock_llm)
+        try:
+            docs = [Document(content="Patient with splenomegaly, no fever.", id="cr1")]
+            result = await extractor.aextract(PatientFindings, docs)
+            assert len(result.records) == 1
+            record = result.records[0]
+            assert isinstance(record, PatientFindings)
+            assert record.patient_id == "P1"
+            assert len(record.symptoms) == 2
+            assert record.symptoms[0].name == "splenomegaly"
+            assert record.symptoms[0].present is True
+            assert record.symptoms[1].present is False
+        finally:
+            _unpatch_extraction()
+
     async def test_confidence_after_retry(self) -> None:
         """Confidence should decrease after retries."""
         bad_then_good = [

@@ -25,6 +25,50 @@ def pydantic_to_json_schema(model: type[BaseModel]) -> dict[str, Any]:
     return model.model_json_schema()
 
 
+def resolve_refs(schema: dict[str, Any], *, _max_depth: int = 10) -> dict[str, Any]:
+    """Inline all ``$ref`` / ``$defs`` references in a JSON Schema dict.
+
+    Returns a new dict with every ``$ref`` replaced by its resolved
+    definition and ``$defs`` / ``definitions`` stripped from the output.
+    Idempotent — a schema without ``$ref`` passes through unchanged.
+
+    Circular references are detected via a *seen* set per resolution path
+    and truncated to ``{"type": "object"}`` after *_max_depth* levels.
+    """
+    defs: dict[str, Any] = {**schema.get("$defs", {}), **schema.get("definitions", {})}
+
+    def _resolve(node: Any, depth: int = 0, seen: frozenset[str] = frozenset()) -> Any:
+        if not isinstance(node, dict):
+            return node
+
+        if depth > _max_depth:
+            return {"type": "object"}
+
+        # Handle $ref
+        if "$ref" in node:
+            ref_path = node["$ref"]
+            ref_name = ref_path.rsplit("/", 1)[-1]
+            if ref_name in seen or ref_name not in defs:
+                return {"type": "object"}
+            return _resolve(defs[ref_name], depth + 1, seen | {ref_name})
+
+        result: dict[str, Any] = {}
+        for key, value in node.items():
+            if key in ("$defs", "definitions"):
+                continue
+            elif key == "properties" and isinstance(value, dict):
+                result[key] = {k: _resolve(v, depth, seen) for k, v in value.items()}
+            elif key == "items":
+                result[key] = _resolve(value, depth, seen)
+            elif key in ("anyOf", "oneOf", "allOf", "prefixItems") and isinstance(value, list):
+                result[key] = [_resolve(item, depth, seen) for item in value]
+            else:
+                result[key] = value
+        return result
+
+    return _resolve(schema)
+
+
 def json_schema_to_pydantic(
     schema: dict[str, Any],
     name: str = "DynamicModel",
@@ -34,6 +78,8 @@ def json_schema_to_pydantic(
     Handles flat and nested object schemas with basic types,
     arrays, optionals, and enums.
     """
+    schema = resolve_refs(schema)
+
     properties = schema.get("properties", {})
     required = set(schema.get("required", []))
 

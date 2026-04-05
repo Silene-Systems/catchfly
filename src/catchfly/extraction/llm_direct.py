@@ -12,6 +12,7 @@ from pydantic import BaseModel, PrivateAttr, ValidationError
 from catchfly._compat import run_sync
 from catchfly._defaults import DEFAULT_MODEL
 from catchfly._parsing import strip_markdown_fences
+from catchfly.schema.converters import resolve_refs
 from catchfly._types import Document, ExtractionResult, RecordProvenance
 from catchfly.exceptions import ExtractionError
 from catchfly.extraction.chunking import chunk_document
@@ -115,7 +116,7 @@ class LLMDirectExtraction(BaseModel):
 
             schema = json_schema_to_pydantic(schema, name=schema.get("title", "Extraction"))
 
-        json_schema = schema.model_json_schema()
+        json_schema = resolve_refs(schema.model_json_schema())
         client = self._get_client()
 
         # Chunk documents
@@ -265,19 +266,34 @@ class LLMDirectExtraction(BaseModel):
 
     @staticmethod
     def _coerce_nulls(data: dict[str, Any], json_schema: dict[str, Any]) -> dict[str, Any]:
-        """Replace null values with schema-appropriate defaults.
+        """Replace null values with schema-appropriate defaults, recursively.
 
         LLMs commonly return ``null`` for empty arrays/objects instead of
         ``[]``/``{}``.  This coercion prevents unnecessary validation retries.
+        Recurses into nested objects and array items.
         """
         properties = json_schema.get("properties", {})
         for key, value in data.items():
-            if value is not None:
-                continue
             prop = properties.get(key, {})
             prop_type = prop.get("type")
-            if prop_type == "array":
-                data[key] = []
-            elif prop_type == "object":
-                data[key] = {}
+
+            if value is None:
+                if prop_type == "array":
+                    data[key] = []
+                elif prop_type == "object":
+                    data[key] = {}
+                continue
+
+            # Recurse into nested objects
+            if isinstance(value, dict) and prop_type == "object" and "properties" in prop:
+                LLMDirectExtraction._coerce_nulls(value, prop)
+
+            # Recurse into array items
+            elif isinstance(value, list) and prop_type == "array":
+                items_schema = prop.get("items", {})
+                if items_schema.get("type") == "object" and "properties" in items_schema:
+                    for item in value:
+                        if isinstance(item, dict):
+                            LLMDirectExtraction._coerce_nulls(item, items_schema)
+
         return data
