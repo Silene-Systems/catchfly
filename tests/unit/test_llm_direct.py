@@ -342,3 +342,196 @@ class TestLLMDirectExtraction:
             assert result.provenance[0].confidence < 1.0
         finally:
             _unpatch_extraction()
+
+    # --- multi_record tests ---
+
+    async def test_multi_record_basic(self) -> None:
+        """multi_record=True extracts multiple records from one document."""
+        response = json.dumps([
+            {"title": "Product A", "rating": 5, "pros": ["fast"]},
+            {"title": "Product B", "rating": 3, "pros": ["cheap"]},
+        ])
+        mock_llm = MockExtractionLLM(responses=[response])
+        extractor = LLMDirectExtraction(model="mock", multi_record=True, max_retries=0)
+        _patch_extraction(extractor, mock_llm)
+        try:
+            docs = [Document(content="Two products reviewed.", id="doc0")]
+            result = await extractor.aextract(ProductReview, docs)
+            assert len(result.records) == 2
+            assert result.records[0].title == "Product A"
+            assert result.records[1].title == "Product B"
+            assert len(result.provenance) == 2
+        finally:
+            _unpatch_extraction()
+
+    async def test_multi_record_single_object_wrapped(self) -> None:
+        """If LLM returns a single object in multi-record mode, wrap it."""
+        response = json.dumps({"title": "Solo", "rating": 4, "pros": ["good"]})
+        mock_llm = MockExtractionLLM(responses=[response])
+        extractor = LLMDirectExtraction(model="mock", multi_record=True, max_retries=0)
+        _patch_extraction(extractor, mock_llm)
+        try:
+            docs = [Document(content="One product.", id="doc0")]
+            result = await extractor.aextract(ProductReview, docs)
+            assert len(result.records) == 1
+            assert result.records[0].title == "Solo"
+        finally:
+            _unpatch_extraction()
+
+    async def test_multi_record_no_chunking_default(self) -> None:
+        """multi_record=True defaults to no chunking (chunk_size=0)."""
+        response = json.dumps([
+            {"title": "A", "rating": 5, "pros": ["x"]},
+        ])
+        mock_llm = MockExtractionLLM(responses=[response])
+        # Long document that would normally be chunked at default 4000
+        extractor = LLMDirectExtraction(model="mock", multi_record=True, max_retries=0)
+        _patch_extraction(extractor, mock_llm)
+        try:
+            long_doc = Document(content="x" * 8000, id="long")
+            result = await extractor.aextract(ProductReview, [long_doc])
+            # Should NOT be chunked — only 1 LLM call, 1 record
+            assert mock_llm._call_index == 1
+            assert len(result.records) == 1
+        finally:
+            _unpatch_extraction()
+
+    async def test_multi_record_explicit_chunk_size(self) -> None:
+        """multi_record=True with explicit chunk_size still chunks."""
+        response = json.dumps([
+            {"title": "A", "rating": 5, "pros": ["x"]},
+        ])
+        mock_llm = MockExtractionLLM(responses=[response])
+        extractor = LLMDirectExtraction(
+            model="mock", multi_record=True, chunk_size=50, chunk_overlap=10, max_retries=0
+        )
+        _patch_extraction(extractor, mock_llm)
+        try:
+            long_doc = Document(content="x" * 200, id="long")
+            result = await extractor.aextract(ProductReview, [long_doc])
+            # Should be chunked — multiple LLM calls
+            assert mock_llm._call_index > 1
+        finally:
+            _unpatch_extraction()
+
+    async def test_multi_record_deduplication(self) -> None:
+        """Duplicate records across chunks are removed when deduplicate=True."""
+        # Both chunks return the same record
+        response = json.dumps([
+            {"title": "Duplicate", "rating": 5, "pros": ["fast"]},
+        ])
+        mock_llm = MockExtractionLLM(responses=[response])
+        extractor = LLMDirectExtraction(
+            model="mock",
+            multi_record=True,
+            deduplicate=True,
+            chunk_size=50,
+            chunk_overlap=10,
+            max_retries=0,
+        )
+        _patch_extraction(extractor, mock_llm)
+        try:
+            long_doc = Document(content="x" * 200, id="long")
+            result = await extractor.aextract(ProductReview, [long_doc])
+            # Multiple chunks but only 1 unique record
+            assert mock_llm._call_index > 1
+            assert len(result.records) == 1
+            assert result.records[0].title == "Duplicate"
+        finally:
+            _unpatch_extraction()
+
+    async def test_multi_record_no_deduplication(self) -> None:
+        """Duplicates preserved when deduplicate=False."""
+        response = json.dumps([
+            {"title": "Duplicate", "rating": 5, "pros": ["fast"]},
+        ])
+        mock_llm = MockExtractionLLM(responses=[response])
+        extractor = LLMDirectExtraction(
+            model="mock",
+            multi_record=True,
+            deduplicate=False,
+            chunk_size=50,
+            chunk_overlap=10,
+            max_retries=0,
+        )
+        _patch_extraction(extractor, mock_llm)
+        try:
+            long_doc = Document(content="x" * 200, id="long")
+            result = await extractor.aextract(ProductReview, [long_doc])
+            # Multiple chunks, each returning same record — all kept
+            assert len(result.records) > 1
+        finally:
+            _unpatch_extraction()
+
+    async def test_multi_record_backward_compat(self) -> None:
+        """Default multi_record=False preserves existing single-record behavior."""
+        mock_llm = MockExtractionLLM()
+        extractor = LLMDirectExtraction(model="mock", max_retries=0)
+        _patch_extraction(extractor, mock_llm)
+        try:
+            result = await extractor.aextract(ProductReview, self._make_docs(2))
+            assert len(result.records) == 2
+            assert all(isinstance(r, ProductReview) for r in result.records)
+        finally:
+            _unpatch_extraction()
+
+    async def test_multi_record_with_dict_schema(self) -> None:
+        """multi_record works with a raw JSON Schema dict."""
+        response = json.dumps([
+            {"title": "A", "rating": 5, "pros": ["x"]},
+            {"title": "B", "rating": 3, "pros": ["y"]},
+        ])
+        mock_llm = MockExtractionLLM(responses=[response])
+        extractor = LLMDirectExtraction(model="mock", multi_record=True, max_retries=0)
+        _patch_extraction(extractor, mock_llm)
+        try:
+            dict_schema = {
+                "title": "Review",
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "rating": {"type": "integer"},
+                    "pros": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["title", "rating", "pros"],
+            }
+            docs = [Document(content="Two products.", id="doc0")]
+            result = await extractor.aextract(dict_schema, docs)
+            assert len(result.records) == 2
+        finally:
+            _unpatch_extraction()
+
+    def test_parse_json_array_basic(self) -> None:
+        result = LLMDirectExtraction._parse_json_array('[{"a": 1}, {"a": 2}]')
+        assert len(result) == 2
+        assert result[0] == {"a": 1}
+
+    def test_parse_json_array_single_object(self) -> None:
+        """A single object is wrapped into a list."""
+        result = LLMDirectExtraction._parse_json_array('{"a": 1}')
+        assert result == [{"a": 1}]
+
+    def test_parse_json_array_invalid(self) -> None:
+        with pytest.raises(json.JSONDecodeError):
+            LLMDirectExtraction._parse_json_array('"just a string"')
+
+    def test_parse_json_array_with_fences(self) -> None:
+        result = LLMDirectExtraction._parse_json_array(
+            '```json\n[{"a": 1}]\n```'
+        )
+        assert result == [{"a": 1}]
+
+    async def test_multi_record_retry(self) -> None:
+        """Multi-record extraction retries on validation error."""
+        bad = '[{"bad": "data"}]'
+        good = json.dumps([{"title": "OK", "rating": 4, "pros": ["fine"]}])
+        mock_llm = MockExtractionLLM(responses=[bad, good])
+        extractor = LLMDirectExtraction(model="mock", multi_record=True, max_retries=2)
+        _patch_extraction(extractor, mock_llm)
+        try:
+            docs = [Document(content="Product review.", id="doc0")]
+            result = await extractor.aextract(ProductReview, docs)
+            assert len(result.records) == 1
+            assert result.records[0].title == "OK"
+        finally:
+            _unpatch_extraction()

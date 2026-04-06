@@ -32,16 +32,37 @@ Rules:
 - Do not invent or hallucinate data not present in the document.\
 """
 
+_MULTI_RECORD_SYSTEM_PROMPT = """\
+You are a structured data extraction assistant. Given a document and a JSON Schema, \
+extract ALL matching records from the document as a JSON array.
+
+Rules:
+- Each element should be a separate entity (e.g., patient, sample, experiment).
+- If only one entity exists, return an array with one element.
+- Output ONLY a valid JSON array matching the provided schema.
+- Extract information directly stated in the document.
+- If a required field is not found, use null.
+- For array fields within each record, include all instances found.
+- Do not invent or hallucinate data not present in the document.
+- Output: [{"field": "value", ...}, ...]\
+"""
+
 
 def _build_extraction_prompt(
     doc: Document,
     schema: dict[str, Any],
+    *,
+    multi_record: bool = False,
 ) -> str:
     schema_str = json.dumps(schema, indent=2)
+    if multi_record:
+        instruction = "Extract ALL matching records as a JSON array."
+    else:
+        instruction = "Extract the structured data as JSON."
     return (
         f"JSON Schema to extract:\n```json\n{schema_str}\n```\n\n"
         f"Document to extract from:\n---\n{doc.content}\n---\n\n"
-        "Extract the structured data as JSON."
+        f"{instruction}"
     )
 
 
@@ -50,15 +71,26 @@ def _build_retry_prompt(
     schema: dict[str, Any],
     previous_output: str,
     error_msg: str,
+    *,
+    multi_record: bool = False,
 ) -> str:
     schema_str = json.dumps(schema, indent=2)
+    if multi_record:
+        instruction = (
+            "Please fix the extraction and output a valid JSON array matching the schema."
+        )
+    else:
+        instruction = "Please fix the extraction and output valid JSON matching the schema."
     return (
         f"JSON Schema:\n```json\n{schema_str}\n```\n\n"
         f"Document:\n---\n{doc.content}\n---\n\n"
         f"Your previous extraction had an error:\n{error_msg}\n\n"
         f"Previous output:\n{previous_output}\n\n"
-        "Please fix the extraction and output valid JSON matching the schema."
+        f"{instruction}"
     )
+
+
+_CHUNK_SIZE_SENTINEL = -1
 
 
 class LLMDirectExtraction(BaseModel):
@@ -67,11 +99,18 @@ class LLMDirectExtraction(BaseModel):
     For each document (or chunk), sends the schema and text to the LLM,
     parses the response into Pydantic model instances, and retries on
     validation errors with feedback.
+
+    When ``multi_record=True``, the LLM is instructed to extract **all**
+    matching entities from each chunk as a JSON array.  Combined with
+    ``chunk_size=0`` (no chunking), this enables correct multi-entity
+    extraction from a single document (e.g. 6 patients from one paper).
     """
 
     model: str = DEFAULT_MODEL
-    chunk_size: int = 4000
-    """4000 chars (~1000 tokens) fits most models' context with room for schema + prompt."""
+    chunk_size: int = _CHUNK_SIZE_SENTINEL
+    """4000 chars (~1000 tokens) by default.  Set to ``0`` to disable chunking.
+    When ``multi_record=True`` and chunk_size is not explicitly set,
+    defaults to ``0`` (no chunking)."""
     chunk_overlap: int = 200
     """200 chars overlap prevents splitting entities at chunk boundaries."""
     chunking_strategy: Any | None = None
@@ -80,6 +119,12 @@ class LLMDirectExtraction(BaseModel):
     batch_size: int = 10
     """10 concurrent requests balances throughput vs rate-limit pressure."""
     on_error: Literal["raise", "skip", "collect"] = "raise"
+    multi_record: bool = False
+    """When ``True``, extract all matching entities from each chunk as a
+    JSON array instead of a single record."""
+    deduplicate: bool = True
+    """When ``True`` and ``multi_record=True``, deduplicate records across
+    chunks by exact JSON match."""
     base_url: str | None = None
     api_key: str | None = None
     client: Any | None = None
@@ -89,6 +134,13 @@ class LLMDirectExtraction(BaseModel):
     _usage_callback: Any = PrivateAttr(default=None)
 
     model_config = {"arbitrary_types_allowed": True}
+
+    @property
+    def _effective_chunk_size(self) -> int:
+        """Resolve the actual chunk_size, applying multi_record default."""
+        if self.chunk_size != _CHUNK_SIZE_SENTINEL:
+            return self.chunk_size
+        return 0 if self.multi_record else 4000
 
     def _get_client(self) -> Any:
         """Return the injected client or create a default one."""
@@ -117,22 +169,36 @@ class LLMDirectExtraction(BaseModel):
             schema = json_schema_to_pydantic(schema, name=schema.get("title", "Extraction"))
 
         json_schema = resolve_refs(schema.model_json_schema())
-        client = self._get_client()
 
-        # Chunk documents
+        # In multi-record mode, wrap schema in array for the LLM prompt
+        if self.multi_record:
+            array_schema = {"type": "array", "items": json_schema}
+        else:
+            array_schema = None
+
+        client = self._get_client()
+        effective_chunk_size = self._effective_chunk_size
+
+        # Chunk documents (chunk_size=0 means no chunking)
         all_chunks: list[Document] = []
         if self.chunking_strategy is not None:
             for doc in documents:
                 all_chunks.extend(self.chunking_strategy.chunk(doc))
+        elif effective_chunk_size <= 0:
+            all_chunks = list(documents)
         else:
             for doc in documents:
-                all_chunks.extend(chunk_document(doc, self.chunk_size, self.chunk_overlap))
+                all_chunks.extend(
+                    chunk_document(doc, effective_chunk_size, self.chunk_overlap)
+                )
 
         logger.info(
-            "LLMDirectExtraction: processing %d documents (%d chunks), model=%s",
+            "LLMDirectExtraction: processing %d documents (%d chunks), "
+            "model=%s, multi_record=%s",
             len(documents),
             len(all_chunks),
             self.model,
+            self.multi_record,
         )
 
         # Process with concurrency control
@@ -144,11 +210,29 @@ class LLMDirectExtraction(BaseModel):
         async def process_chunk(chunk: Document) -> None:
             async with semaphore:
                 try:
-                    record, provenance = await self._extract_single(
-                        client, schema, json_schema, chunk
-                    )
-                    records.append(record)
-                    provenances.append(provenance)
+                    if self.multi_record:
+                        chunk_records = await self._extract_multi(
+                            client, schema, json_schema, array_schema, chunk
+                        )
+                        records.extend(chunk_records)
+                        for _ in chunk_records:
+                            provenances.append(
+                                RecordProvenance(
+                                    source_document=str(
+                                        chunk.source or chunk.id or "unknown"
+                                    ),
+                                    chunk_index=chunk.metadata.get("chunk_index"),
+                                    char_start=chunk.metadata.get("char_start"),
+                                    char_end=chunk.metadata.get("char_end"),
+                                    confidence=1.0,
+                                )
+                            )
+                    else:
+                        record, provenance = await self._extract_single(
+                            client, schema, json_schema, chunk
+                        )
+                        records.append(record)
+                        provenances.append(provenance)
                 except Exception as e:
                     if self.on_error == "raise":
                         raise
@@ -168,6 +252,20 @@ class LLMDirectExtraction(BaseModel):
 
         tasks = [process_chunk(chunk) for chunk in all_chunks]
         await asyncio.gather(*tasks)
+
+        # Deduplicate multi-record results across chunks
+        if self.multi_record and self.deduplicate and len(records) > 0:
+            seen: set[str] = set()
+            unique_records: list[Any] = []
+            unique_provenances: list[RecordProvenance] = []
+            for rec, prov in zip(records, provenances):
+                key = json.dumps(rec.model_dump(), sort_keys=True, default=str)
+                if key not in seen:
+                    seen.add(key)
+                    unique_records.append(rec)
+                    unique_provenances.append(prov)
+            records = unique_records
+            provenances = unique_provenances
 
         logger.info(
             "LLMDirectExtraction: extracted %d records, %d errors",
@@ -253,6 +351,74 @@ class LLMDirectExtraction(BaseModel):
             f"for document '{doc.id}': {last_error}"
         ) from last_error
 
+    async def _extract_multi(
+        self,
+        client: OpenAICompatibleClient,
+        schema: type[BaseModel],
+        json_schema: dict[str, Any],
+        array_schema: dict[str, Any] | None,
+        doc: Document,
+    ) -> list[Any]:
+        """Extract multiple records from a document/chunk with retries."""
+        prompt_schema = array_schema or json_schema
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": _MULTI_RECORD_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": _build_extraction_prompt(
+                    doc, prompt_schema, multi_record=True
+                ),
+            },
+        ]
+
+        last_error: Exception | None = None
+        last_output = ""
+
+        for attempt in range(self.max_retries + 1):
+            response: LLMResponse = await client.astructured_complete(
+                messages,
+                output_schema=prompt_schema,
+                schema_name="extraction",
+            )
+
+            try:
+                raw_list = self._parse_json_array(response.content)
+                validated: list[Any] = []
+                for item in raw_list:
+                    item = self._coerce_nulls(item, json_schema)
+                    validated.append(schema.model_validate(item))
+                return validated
+
+            except (json.JSONDecodeError, ValidationError) as e:
+                last_error = e
+                last_output = response.content
+                if attempt < self.max_retries:
+                    logger.warning(
+                        "Multi-record extraction failed (attempt %d/%d) for '%s': %s",
+                        attempt + 1,
+                        self.max_retries + 1,
+                        doc.id,
+                        e,
+                    )
+                    messages = [
+                        {"role": "system", "content": _MULTI_RECORD_SYSTEM_PROMPT},
+                        {
+                            "role": "user",
+                            "content": _build_retry_prompt(
+                                doc,
+                                prompt_schema,
+                                last_output,
+                                str(e),
+                                multi_record=True,
+                            ),
+                        },
+                    ]
+
+        raise ExtractionError(
+            f"Multi-record extraction failed after {self.max_retries + 1} attempts "
+            f"for document '{doc.id}': {last_error}"
+        ) from last_error
+
     @staticmethod
     def _parse_json(content: str) -> dict[str, Any]:
         """Parse JSON from LLM response, handling markdown fences."""
@@ -262,6 +428,24 @@ class LLMDirectExtraction(BaseModel):
         if not isinstance(data, dict):
             msg = f"Expected JSON object, got {type(data).__name__}"
             raise json.JSONDecodeError(msg, text, 0)
+        return data
+
+    @staticmethod
+    def _parse_json_array(content: str) -> list[dict[str, Any]]:
+        """Parse a JSON array from LLM response, handling markdown fences."""
+        text = strip_markdown_fences(content)
+
+        data = json.loads(text)
+        if isinstance(data, dict):
+            # LLM returned a single object — wrap it in a list
+            return [data]
+        if not isinstance(data, list):
+            msg = f"Expected JSON array, got {type(data).__name__}"
+            raise json.JSONDecodeError(msg, text, 0)
+        for i, item in enumerate(data):
+            if not isinstance(item, dict):
+                msg = f"Expected JSON object at index {i}, got {type(item).__name__}"
+                raise json.JSONDecodeError(msg, text, 0)
         return data
 
     @staticmethod
