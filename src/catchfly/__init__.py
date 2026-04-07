@@ -11,12 +11,14 @@ import logging
 
 from catchfly._defaults import DEFAULT_EMBEDDING_MODEL, DEFAULT_MODEL
 from catchfly._types import (
+    CostEstimate,
     Document,
     ExtractionResult,
     NormalizationResult,
     PipelineResult,
     RecordProvenance,
     Schema,
+    SourceSpan,
     UsageReport,
 )
 from catchfly.exceptions import (
@@ -30,11 +32,12 @@ from catchfly.exceptions import (
 )
 from catchfly.pipeline import Pipeline
 
-__version__ = "1.1.3"
+__version__ = "1.1.4"
 
 __all__ = [
     "BudgetExceededError",
     "CatchflyError",
+    "CostEstimate",
     "DEFAULT_EMBEDDING_MODEL",
     "DEFAULT_MODEL",
     "DiscoveryError",
@@ -49,6 +52,7 @@ __all__ = [
     "RecordProvenance",
     "Schema",
     "SchemaError",
+    "SourceSpan",
     "UsageReport",
     "__version__",
 ]

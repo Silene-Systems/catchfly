@@ -43,22 +43,56 @@ Output ONLY valid JSON with this structure:
 }\
 """
 
+_CHANGES_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "add_fields": {
+            "type": "object",
+            "description": "Field name → JSON Schema field definition",
+        },
+        "remove_fields": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Names of fields to remove from the schema",
+        },
+        "modify_fields": {
+            "type": "object",
+            "description": (
+                "Field name → partial JSON Schema update "
+                "(merged into existing field)"
+            ),
+        },
+        "rationale": {
+            "type": "string",
+            "description": "Brief explanation of the proposed changes",
+        },
+    },
+}
+"""Output schema for refinement / expansion / refine-instruction calls.
+
+Kept permissive (no ``required``, no ``additionalProperties: false``) so
+the LLM can return any subset of the operations — including an empty
+change set — without triggering strict-mode violations across the
+various compatible backends (OpenAI, Anthropic, Ollama, vLLM)."""
+
+
 _EXPANSION_SYSTEM = """\
-You are a schema expansion assistant. Given a JSON Schema, extraction results \
-from a large sample, and field coverage statistics, decide which new fields \
-to add and which rare fields to remove.
+You are a schema expansion assistant. Given a JSON Schema and extraction \
+results from a large sample, propose NEW fields to add to the schema.
 
 Rules:
-- Add fields that appear in >20% of documents but aren't in the schema
-- Flag fields with <5% coverage for removal
-- Keep fields that are important even if rare (use judgment)
+- Add fields whose data appears recurrently across documents (roughly >20% \
+of the sample) but isn't yet captured by the schema
+- Focus on fields that represent real, recurring information — ignore \
+one-off or document-specific details
+- Do NOT remove, rename, or modify existing fields — expansion is strictly \
+additive. Low-coverage fields are handled elsewhere
+- If no additions are warranted, return an empty add_fields object
 
-Output ONLY valid JSON with the same structure as before:
+Output ONLY valid JSON with this structure:
 {
   "add_fields": {"field_name": {"type": "...", "description": "..."}},
-  "remove_fields": ["field_to_remove"],
-  "modify_fields": {},
-  "rationale": "Brief explanation"
+  "rationale": "Brief explanation of additions"
 }\
 """
 
@@ -78,12 +112,28 @@ class ThreeStageDiscovery(BaseModel):
     """Stage 2 uses a moderate sample to catch gaps without excessive LLM cost."""
     stage3_samples: int = 50
     """Stage 3 uses a larger sample to validate coverage at near-corpus scale."""
-    max_doc_chars: int = 3000
-    """Truncation limit per document — fits ~750 tokens, balancing context vs cost."""
+    min_samples_for_removal: int = 5
+    """Minimum number of documents required before coverage-based field
+    removal is permitted. When the stage 2 sample is smaller than this,
+    refinement runs in strictly-additive mode — the LLM can propose
+    additions but ``remove_fields`` / ``modify_fields`` are ignored. At
+    N < 5 coverage statistics are too noisy (each field is effectively
+    0% or 100%) to justify deleting work that stage 1 produced."""
+    max_doc_chars: int = 30000
+    """Per-document truncation limit (~7500 tokens). See
+    :attr:`SinglePassDiscovery.max_doc_chars` for the rationale behind
+    the default."""
     max_fields: int | None = None
     """Maximum number of fields in the discovered schema. None = no limit."""
     suggested_fields: list[str] | None = None
     """Field names to include in the schema. LLM may add others if found in documents."""
+    focus: str | None = None
+    """User-facing intent that narrows what the schema should capture.
+
+    See :attr:`SinglePassDiscovery.focus` for the full rationale. The
+    focus is forwarded to stage 1 (initial schema) — stages 2 and 3
+    inherit the resulting schema. Leaving ``focus`` unset preserves the
+    prior behaviour of proposing a broad, catch-all schema."""
     human_review: bool = False
     base_url: str | None = None
     api_key: str | None = None
@@ -140,9 +190,23 @@ class ThreeStageDiscovery(BaseModel):
         refinement = await self._get_refinement(
             client, json_schema, extracted, coverage, _REFINEMENT_SYSTEM
         )
-        json_schema = self._apply_changes(json_schema, refinement)
+        # At small sample sizes, coverage statistics are too noisy to justify
+        # field removal — a single missing doc gives 0% coverage even for a
+        # perfectly valid field. Fall back to strictly-additive refinement.
+        stage2_strictly_additive = len(stage2_docs) < self.min_samples_for_removal
+        if stage2_strictly_additive:
+            logger.info(
+                "ThreeStageDiscovery: Stage 2 running in strictly-additive mode "
+                "(sample %d < min_samples_for_removal %d)",
+                len(stage2_docs),
+                self.min_samples_for_removal,
+            )
+        json_schema = self._apply_changes(
+            json_schema, refinement, strictly_additive=stage2_strictly_additive
+        )
         report_meta["stages_completed"] = 2
         report_meta["stage2_changes"] = refinement
+        report_meta["stage2_strictly_additive"] = stage2_strictly_additive
 
         if self.human_review:
             logger.info(
@@ -161,7 +225,12 @@ class ThreeStageDiscovery(BaseModel):
         expansion = await self._get_refinement(
             client, json_schema, extracted, coverage, _EXPANSION_SYSTEM
         )
-        json_schema = self._apply_changes(json_schema, expansion)
+        # Stage 3 is strictly additive by design — the _EXPANSION_SYSTEM
+        # prompt only asks for new fields. The flag defends against LLMs
+        # that ignore the instruction and return remove_fields anyway.
+        json_schema = self._apply_changes(
+            json_schema, expansion, strictly_additive=True
+        )
         report_meta["stages_completed"] = 3
         report_meta["stage3_changes"] = expansion
 
@@ -195,6 +264,7 @@ class ThreeStageDiscovery(BaseModel):
             num_samples=self.stage1_samples,
             max_fields=self.max_fields,
             suggested_fields=self.suggested_fields,
+            focus=self.focus,
             base_url=self.base_url,
             api_key=self.api_key,
             temperature=self.temperature,
@@ -207,44 +277,81 @@ class ThreeStageDiscovery(BaseModel):
         json_schema: dict[str, Any],
         documents: list[Document],
     ) -> list[dict[str, Any]]:
-        """Attempt extraction on documents using current schema."""
-        schema_str = json.dumps(json_schema, indent=2)
-        results: list[dict[str, Any]] = []
+        """Run extraction on the current schema via :class:`LLMDirectExtraction`.
 
-        for doc in documents:
-            prompt = (
-                f"Extract data from this document using the schema below.\n\n"
-                f"Schema:\n```json\n{schema_str}\n```\n\n"
-                f"Document:\n---\n{doc.content[: self.max_doc_chars]}\n---\n\n"
-                f"Output ONLY the extracted JSON."
+        Dogfoods the same extractor users will run after discovery, so
+        coverage statistics computed here reflect real extraction
+        behaviour rather than a bespoke discovery-only prompt. Documents
+        are truncated to ``max_doc_chars`` (mirroring the previous
+        behaviour) and chunking is disabled so each document maps to a
+        single extraction record, preserving the one-doc-one-dict
+        contract that ``_compute_coverage`` depends on.
+        """
+        # Local import avoids the cycle: llm_direct.py does not import
+        # from discovery, but discovery/__init__.py imports this module,
+        # so the top-level import would be eager during package load.
+        from catchfly.extraction.llm_direct import LLMDirectExtraction
+        from catchfly.schema.converters import json_schema_to_pydantic
+
+        # Truncate documents up-front — discovery only ever "sees" the
+        # first ``max_doc_chars`` characters, matching the old behaviour.
+        truncated_docs = [
+            Document(
+                content=doc.content[: self.max_doc_chars],
+                id=doc.id or f"_discovery_doc_{i}",
+                source=doc.source,
+                metadata=dict(doc.metadata),
             )
-            try:
-                sys_msg = "Extract structured data. Output only JSON."
-                response = await client.acomplete(
-                    [
-                        {"role": "system", "content": sys_msg},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.0,
-                )
-                data = json.loads(response.content)
-                results.append(data if isinstance(data, dict) else {})
-            except json.JSONDecodeError:
-                logger.debug(
-                    "ThreeStageDiscovery: JSON parse error for doc '%s'",
-                    doc.id or "(no id)",
-                )
-                results.append({})
-            except (ProviderError, ValueError, KeyError, TypeError) as e:
-                logger.debug(
-                    "ThreeStageDiscovery: extraction failed for doc '%s': %s",
-                    doc.id or "(no id)",
-                    e,
-                    exc_info=True,
-                )
-                results.append({})
+            for i, doc in enumerate(documents)
+        ]
 
-        return results
+        # Build Pydantic model once up-front so a malformed intermediate
+        # schema (e.g. a stage-2 change that introduced an unsupported
+        # type) surfaces cleanly instead of hiding inside the extractor.
+        try:
+            schema_model = json_schema_to_pydantic(
+                json_schema, name="DiscoveryProbe"
+            )
+        except (SchemaError, ValueError, TypeError) as e:
+            logger.debug(
+                "ThreeStageDiscovery: intermediate schema not realisable "
+                "as Pydantic model, skipping extraction probe: %s",
+                e,
+            )
+            return [{} for _ in documents]
+
+        extractor = LLMDirectExtraction(
+            model=self.model,
+            chunk_size=0,  # truncation already limited size; no chunking
+            max_retries=1,
+            on_error="collect",  # keep discovery alive on per-doc failures
+            client=client,
+        )
+
+        try:
+            result = await extractor.aextract(schema_model, truncated_docs)
+        except (ProviderError, ValueError, KeyError, TypeError) as e:
+            logger.debug(
+                "ThreeStageDiscovery: dogfooded extraction probe failed: %s",
+                e,
+                exc_info=True,
+            )
+            return [{} for _ in documents]
+
+        # LLMDirectExtraction appends records in completion order under
+        # asyncio.gather, so we can't assume positional alignment with
+        # ``truncated_docs``. Match back via the provenance's
+        # source_document (which mirrors the same str(source or id)
+        # fallback used when producing the RecordProvenance).
+        def _doc_key(doc: Document) -> str:
+            return str(doc.source or doc.id or "unknown")
+
+        records_by_key: dict[str, dict[str, Any]] = {}
+        for rec, prov in zip(result.records, result.provenance, strict=False):
+            payload = rec.model_dump() if hasattr(rec, "model_dump") else {}
+            records_by_key[prov.source_document] = payload
+
+        return [records_by_key.get(_doc_key(doc), {}) for doc in truncated_docs]
 
     async def _get_refinement(
         self,
@@ -254,15 +361,24 @@ class ThreeStageDiscovery(BaseModel):
         coverage: dict[str, float],
         system_prompt: str,
     ) -> dict[str, Any]:
-        """Ask LLM to propose schema changes."""
+        """Ask LLM to propose schema changes with a fixed output shape.
+
+        Uses ``astructured_complete`` with :data:`_CHANGES_OUTPUT_SCHEMA`
+        so providers that support ``response_format=json_schema`` (or
+        tool calling) return a guaranteed-shape payload — eliminating
+        the JSONDecodeError / shape-drift retries that the old
+        plain-prompt path used to swallow silently.
+        """
         user_prompt = self._build_refinement_prompt(json_schema, extracted, coverage)
 
         try:
-            response = await client.acomplete(
+            response = await client.astructured_complete(
                 [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
+                output_schema=_CHANGES_OUTPUT_SCHEMA,
+                schema_name="schema_changes",
                 temperature=self.temperature,
             )
             return self._parse_changes(response.content)
@@ -337,11 +453,31 @@ class ThreeStageDiscovery(BaseModel):
     def _apply_changes(
         json_schema: dict[str, Any],
         changes: dict[str, Any],
+        *,
+        strictly_additive: bool = False,
     ) -> dict[str, Any]:
-        """Apply add/remove/modify changes to a JSON Schema."""
+        """Apply add/remove/modify changes to a JSON Schema.
+
+        Args:
+            json_schema: The schema to modify. Not mutated — a deep copy is
+                always returned.
+            changes: Proposed changes with keys ``add_fields``,
+                ``remove_fields``, and ``modify_fields``.
+            strictly_additive: When ``True``, ``remove_fields`` and
+                ``modify_fields`` are ignored regardless of what the LLM
+                returned. Used by the expansion stage and by small-sample
+                runs where coverage-based removal would be unsafe.
+
+        Invariant: the result always contains at least as many properties
+        as the input, or — if the changes would reduce properties to an
+        empty set — the input schema is returned unchanged with a warning
+        logged. This prevents an over-eager LLM (or a noisy small-sample
+        coverage signal) from wiping out the discovered schema.
+        """
         schema = json.loads(json.dumps(json_schema))  # deep copy
         properties = schema.setdefault("properties", {})
         required = set(schema.get("required", []))
+        input_had_properties = bool(json_schema.get("properties"))
 
         # Add new fields
         for name, field_def in changes.get("add_fields", {}).items():
@@ -349,18 +485,37 @@ class ThreeStageDiscovery(BaseModel):
                 properties[name] = field_def
                 logger.debug("ThreeStageDiscovery: added field '%s'", name)
 
-        # Remove fields
-        for name in changes.get("remove_fields", []):
-            if name in properties:
-                del properties[name]
-                required.discard(name)
-                logger.debug("ThreeStageDiscovery: removed field '%s'", name)
+        if not strictly_additive:
+            # Remove fields
+            for name in changes.get("remove_fields", []):
+                if name in properties:
+                    del properties[name]
+                    required.discard(name)
+                    logger.debug("ThreeStageDiscovery: removed field '%s'", name)
 
-        # Modify fields
-        for name, field_def in changes.get("modify_fields", {}).items():
-            if isinstance(field_def, dict) and name in properties:
-                properties[name].update(field_def)
-                logger.debug("ThreeStageDiscovery: modified field '%s'", name)
+            # Modify fields
+            for name, field_def in changes.get("modify_fields", {}).items():
+                if isinstance(field_def, dict) and name in properties:
+                    properties[name].update(field_def)
+                    logger.debug("ThreeStageDiscovery: modified field '%s'", name)
+        elif changes.get("remove_fields") or changes.get("modify_fields"):
+            logger.info(
+                "ThreeStageDiscovery: ignoring remove_fields/modify_fields "
+                "from LLM response (strictly_additive=True)"
+            )
+
+        # Invariant: never reduce a non-empty schema to an empty schema.
+        # This guards against an over-eager LLM marking every field for
+        # removal based on noisy coverage statistics from a small sample.
+        if input_had_properties and not properties:
+            logger.warning(
+                "ThreeStageDiscovery: proposed changes would leave the "
+                "schema with zero properties; keeping previous schema "
+                "unchanged. This usually indicates noisy coverage "
+                "statistics at small sample sizes."
+            )
+            reverted: dict[str, Any] = json.loads(json.dumps(json_schema))
+            return reverted
 
         schema["required"] = sorted(required)
         result: dict[str, Any] = schema

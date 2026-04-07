@@ -18,7 +18,7 @@ from catchfly._compat import run_sync
 from catchfly._defaults import DEFAULT_MODEL
 from catchfly._parsing import strip_markdown_fences
 from catchfly._types import Document, Schema
-from catchfly.exceptions import DiscoveryError, ProviderError
+from catchfly.exceptions import DiscoveryError, ProviderError, SchemaError
 from catchfly.providers.llm import OpenAICompatibleClient
 
 logger = logging.getLogger(__name__)
@@ -46,6 +46,26 @@ Output ONLY valid JSON with the structure:
   }
 }\
 """
+
+
+_ENRICHMENT_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "fields": {
+            "type": "object",
+            "description": (
+                "Field name → enrichment payload "
+                "(description, examples, synonyms, constraints)"
+            ),
+        },
+    },
+}
+"""Output schema for :class:`SchemaOptimizer` enrichment calls.
+
+Keeps the top-level shape fixed (``{"fields": {...}}``) but leaves the
+inner per-field payload unconstrained so providers that support
+``response_format=json_schema`` don't fight the LLM's freedom to vary
+the enrichment content per field."""
 
 
 def _build_enrichment_prompt(
@@ -97,8 +117,10 @@ class SchemaOptimizer(BaseModel):
     """10 docs per iteration gives sufficient signal without excessive API calls."""
     low_coverage_threshold: float = 0.8
     """Fields below 80% coverage are flagged as needing better descriptions."""
-    max_doc_chars: int = 3000
-    """Truncation limit per document — fits ~750 tokens, balancing context vs cost."""
+    max_doc_chars: int = 30000
+    """Per-document truncation limit (~7500 tokens). Matches
+    :attr:`SinglePassDiscovery.max_doc_chars` so optimizer and discovery
+    see the same view of each document."""
     base_url: str | None = None
     api_key: str | None = None
     temperature: float = 0.3
@@ -216,47 +238,69 @@ class SchemaOptimizer(BaseModel):
         json_schema: dict[str, Any],
         documents: list[Document],
     ) -> list[dict[str, Any]]:
-        """Try extracting data from documents using current schema."""
-        schema_str = json.dumps(json_schema, indent=2)
-        results: list[dict[str, Any]] = []
+        """Extract samples via :class:`LLMDirectExtraction`.
 
-        for doc in documents[: self.max_docs_per_iteration]:
-            prompt = (
-                f"Extract structured data from this document according to "
-                f"the JSON Schema below.\n\n"
-                f"Schema:\n```json\n{schema_str}\n```\n\n"
-                f"Document:\n---\n{doc.content[: self.max_doc_chars]}\n---\n\n"
-                f"Output ONLY the extracted JSON."
+        Dogfooded for the same reason as
+        :meth:`ThreeStageDiscovery._try_extraction`: the optimizer's
+        coverage / error analysis is only meaningful if it reflects
+        what the real extractor will do.
+        """
+        from catchfly.extraction.llm_direct import LLMDirectExtraction
+        from catchfly.schema.converters import json_schema_to_pydantic
+
+        sampled = documents[: self.max_docs_per_iteration]
+        truncated_docs = [
+            Document(
+                content=doc.content[: self.max_doc_chars],
+                id=doc.id or f"_optimizer_doc_{i}",
+                source=doc.source,
+                metadata=dict(doc.metadata),
             )
+            for i, doc in enumerate(sampled)
+        ]
 
-            try:
-                sys_msg = "You are a data extraction assistant. Output only valid JSON."
-                response = await client.acomplete(
-                    [
-                        {"role": "system", "content": sys_msg},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.0,
-                )
-                data = json.loads(response.content)
-                if isinstance(data, dict):
-                    results.append(data)
-            except json.JSONDecodeError:
-                logger.debug(
-                    "SchemaOptimizer: JSON parse error for doc '%s'",
-                    doc.id or "(no id)",
-                )
-                results.append({})
-            except (ProviderError, ValueError, KeyError, TypeError) as e:
-                logger.debug(
-                    "SchemaOptimizer: extraction failed for doc '%s': %s",
-                    doc.id or "(no id)",
-                    e,
-                    exc_info=True,
-                )
-                results.append({})
+        try:
+            schema_model = json_schema_to_pydantic(
+                json_schema, name="OptimizerProbe"
+            )
+        except (SchemaError, ValueError, TypeError) as e:
+            logger.debug(
+                "SchemaOptimizer: intermediate schema not realisable "
+                "as Pydantic model, skipping extraction probe: %s",
+                e,
+            )
+            return [{} for _ in sampled]
 
-        return results
+        extractor = LLMDirectExtraction(
+            model=self.model,
+            chunk_size=0,
+            max_retries=1,
+            on_error="collect",
+            client=client,
+        )
+
+        try:
+            result = await extractor.aextract(schema_model, truncated_docs)
+        except (ProviderError, ValueError, KeyError, TypeError) as e:
+            logger.debug(
+                "SchemaOptimizer: dogfooded extraction probe failed: %s",
+                e,
+                exc_info=True,
+            )
+            return [{} for _ in sampled]
+
+        # Map records back to input order via provenance.source_document —
+        # LLMDirectExtraction may deliver them out-of-order under
+        # asyncio.gather concurrency.
+        def _doc_key(doc: Document) -> str:
+            return str(doc.source or doc.id or "unknown")
+
+        records_by_key: dict[str, dict[str, Any]] = {}
+        for rec, prov in zip(result.records, result.provenance, strict=False):
+            payload = rec.model_dump() if hasattr(rec, "model_dump") else {}
+            records_by_key[prov.source_document] = payload
+
+        return [records_by_key.get(_doc_key(doc), {}) for doc in truncated_docs]
 
     def _analyze_gaps(
         self,
@@ -299,15 +343,17 @@ class SchemaOptimizer(BaseModel):
         error_analysis: dict[str, Any],
         iteration: int,
     ) -> dict[str, dict[str, Any]]:
-        """Ask LLM to enrich field descriptions."""
+        """Ask LLM to enrich field descriptions via structured output."""
         prompt = _build_enrichment_prompt(json_schema, extracted, error_analysis, iteration)
 
         try:
-            response = await client.acomplete(
+            response = await client.astructured_complete(
                 [
                     {"role": "system", "content": _ENRICHMENT_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
+                output_schema=_ENRICHMENT_OUTPUT_SCHEMA,
+                schema_name="schema_enrichment",
                 temperature=self.temperature,
             )
 

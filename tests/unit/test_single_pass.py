@@ -136,9 +136,24 @@ class TestSinglePassDiscovery:
         assert instance.name == "test"  # type: ignore[attr-defined]
 
     def test_build_pydantic_model_failure(self) -> None:
-        # Empty properties should cause failure
-        model = SinglePassDiscovery._build_pydantic_model({"type": "object"})
-        assert model is None
+        """Empty properties must raise DiscoveryError, not silently return None.
+
+        A discovered schema that cannot be realised as a Pydantic model
+        is never a useful result — downstream extraction would be skipped
+        and the user would be left guessing why the pipeline "worked"
+        but produced no records.
+        """
+        with pytest.raises(DiscoveryError, match="Pydantic model"):
+            SinglePassDiscovery._build_pydantic_model({"type": "object"})
+
+    def test_build_pydantic_model_failure_chains_original(self) -> None:
+        """The original SchemaError is preserved in __cause__."""
+        try:
+            SinglePassDiscovery._build_pydantic_model({"type": "object"})
+        except DiscoveryError as e:
+            assert e.__cause__ is not None
+        else:
+            pytest.fail("expected DiscoveryError")
 
 
 class TestBuildUserPrompt:
@@ -199,6 +214,31 @@ class TestBuildUserPrompt:
         prompt = _build_user_prompt(self._make_docs())
         assert "at most" not in prompt
         assert "should include these fields" not in prompt
+        assert "Focus of extraction" not in prompt
+
+    def test_focus_included(self) -> None:
+        from catchfly.discovery.single_pass import _build_user_prompt
+
+        prompt = _build_user_prompt(
+            self._make_docs(),
+            focus="patient demographics and symptoms, skip metadata",
+        )
+        assert "Focus of extraction: patient demographics and symptoms" in prompt
+        assert "Avoid administrative" in prompt
+
+    def test_focus_distinct_from_domain_hint(self) -> None:
+        """Both domain_hint and focus appear independently in the prompt."""
+        from catchfly.discovery.single_pass import _build_user_prompt
+
+        prompt = _build_user_prompt(
+            self._make_docs(),
+            domain_hint="biomedical case reports",
+            focus="patient outcomes",
+        )
+        assert "Domain context: biomedical case reports" in prompt
+        assert "Focus of extraction: patient outcomes" in prompt
+        # The focus section should come after the domain context
+        assert prompt.index("Domain context") < prompt.index("Focus of extraction")
 
 
 class TestTemperatureDefault:

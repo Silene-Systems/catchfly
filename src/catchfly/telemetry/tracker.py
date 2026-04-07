@@ -27,6 +27,31 @@ _DEFAULT_PRICING: dict[str, tuple[float, float]] = {
 }
 
 
+def estimate_llm_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    *,
+    pricing: dict[str, tuple[float, float]] | None = None,
+) -> float:
+    """Estimate USD cost for a hypothetical LLM call, without making it.
+
+    Returns ``0.0`` for unknown models — callers are expected to pass a
+    custom *pricing* mapping in that case.
+    """
+    effective_pricing = {**_DEFAULT_PRICING, **(pricing or {})}
+    rates = effective_pricing.get(model)
+    if rates is None:
+        return 0.0
+    input_rate, output_rate = rates
+    return (input_tokens * input_rate + output_tokens * output_rate) / 1_000_000
+
+
+def is_model_priced(model: str) -> bool:
+    """Return True when the default pricing table has an entry for *model*."""
+    return model in _DEFAULT_PRICING
+
+
 @dataclass
 class UsageRecord:
     """A single LLM call record."""

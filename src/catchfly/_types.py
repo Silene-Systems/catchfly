@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+SpanConfidence = Literal["exact", "fuzzy", "unresolved", "inferred"]
+"""Confidence level of a :class:`SourceSpan` match against the source text.
+
+- ``"exact"``: quote found as a byte-identical substring of the source document.
+- ``"fuzzy"``: quote matched only after whitespace / punctuation normalization.
+- ``"unresolved"``: the LLM returned a quote that could not be located anywhere
+  in the source (likely hallucination or aggressive paraphrase).
+- ``"inferred"``: the LLM explicitly signalled that the value was inferred
+  from context without a directly supporting passage (empty quote).
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -44,14 +55,61 @@ SchemaT = TypeVar("SchemaT", bound=BaseModel)
 # Extraction results
 # ---------------------------------------------------------------------------
 @dataclass
+class SourceSpan:
+    """A single supporting excerpt from a source document.
+
+    Produced by extraction strategies that support per-field provenance
+    (see :attr:`RecordProvenance.field_spans`). The *quote* is verbatim text
+    the LLM identified as evidence for an extracted value; *start* / *end*
+    are character offsets into the original source content when the quote
+    could be deterministically located.
+
+    Offsets are **Python character offsets** (``len(content)``, counting
+    Unicode code points), not UTF-8 bytes or UTF-16 code units. Frontends
+    rendering highlights in JavaScript should index into the string via
+    ``Array.from(content).slice(start, end).join("")`` rather than
+    ``content.slice(start, end)`` to handle astral characters correctly.
+    """
+
+    quote: str
+    """Verbatim (or near-verbatim) excerpt from the source document."""
+
+    document_id: str | None = None
+    """Identifier of the source document the quote was located in.
+    Relevant when extraction runs over multiple documents."""
+
+    start: int | None = None
+    """Character offset of the start of the quote in the source content,
+    or ``None`` if the quote could not be located (``confidence='unresolved'``
+    or ``'inferred'``)."""
+
+    end: int | None = None
+    """Character offset of the end of the quote (exclusive), or ``None``."""
+
+    confidence: SpanConfidence = "exact"
+    """How reliably the quote was matched against the source text."""
+
+
+@dataclass
 class RecordProvenance:
-    """Provenance information for a single extracted record."""
+    """Provenance information for a single extracted record.
+
+    Combines document-level provenance (which document / chunk the record
+    came from) with optional per-field provenance (which passages supported
+    each extracted value). Per-field provenance is only populated when the
+    extraction strategy was configured with ``include_provenance=True``.
+    """
 
     source_document: str
     chunk_index: int | None = None
     char_start: int | None = None
     char_end: int | None = None
     confidence: float | None = None
+    field_spans: dict[str, list[SourceSpan]] | None = None
+    """Per-field supporting spans, or ``None`` if per-field provenance
+    was not requested. An empty list for a given field means the field
+    was present in the extraction but no supporting quote was produced
+    (e.g. the value was inferred, or the LLM omitted the quote)."""
 
 
 @dataclass
@@ -129,6 +187,37 @@ class UsageReport:
     def cost_usd(self) -> float:
         """Alias for total_cost_usd (PRD compatibility)."""
         return self.total_cost_usd
+
+
+@dataclass
+class CostEstimate:
+    """Forward cost estimate for an extraction run, computed without LLM calls.
+
+    Produced by :meth:`catchfly.extraction.LLMDirectExtraction.estimate_cost`
+    to answer *"how much will this run cost me"* before a user commits API
+    budget. Input tokens are computed by tokenizing the exact prompts that
+    would be sent; output tokens are a conservative heuristic based on the
+    schema shape and enabled features (``multi_record``, ``include_provenance``).
+
+    Treat :attr:`cost_usd` as a sanity-check upper bound, not a billing
+    contract — actual output varies with model verbosity and document
+    content. :attr:`tokenizer` records which backend produced the input
+    count so callers can gauge the precision of the estimate.
+    """
+
+    model: str
+    num_documents: int
+    num_chunks: int
+    input_tokens: int
+    estimated_output_tokens: int
+    cost_usd: float
+    tokenizer: str
+    """``"tiktoken:<encoding>"`` when :mod:`tiktoken` is installed and the
+    model is known; ``"heuristic:chars-over-4"`` otherwise."""
+    notes: list[str] = field(default_factory=list)
+    """Human-readable caveats (e.g. unknown model falling back to zero
+    cost, provenance multiplier applied, multi_record records_per_doc
+    estimate)."""
 
 
 @dataclass

@@ -39,13 +39,21 @@ def _build_user_prompt(
     documents: list[Document],
     domain_hint: str | None = None,
     *,
-    max_doc_chars: int = 3000,
+    max_doc_chars: int = 30000,
     max_fields: int | None = None,
     suggested_fields: list[str] | None = None,
+    focus: str | None = None,
 ) -> str:
     parts: list[str] = []
     if domain_hint:
         parts.append(f"Domain context: {domain_hint}\n")
+
+    if focus:
+        parts.append(
+            f"Focus of extraction: {focus}\n"
+            "Prefer fields that support this focus. Avoid administrative "
+            "or metadata fields unless they are clearly in scope.\n"
+        )
 
     if suggested_fields:
         fields_str = ", ".join(suggested_fields)
@@ -85,9 +93,26 @@ class SinglePassDiscovery(BaseModel):
     model: str = DEFAULT_MODEL
     num_samples: int = 5
     """5 samples provides good schema coverage without excessive prompt length."""
-    max_doc_chars: int = 3000
-    """Truncation limit per document — fits ~750 tokens, balancing context vs cost."""
+    max_doc_chars: int = 30000
+    """Per-document truncation limit (~7500 tokens).
+
+    Set to roughly 10x the previous default (3000) to handle scientific
+    literature where interesting fields typically live after the
+    methods/results section — case reports, RCTs, meta-analyses rarely
+    fit their important content in the first 3000 characters. Stage 1
+    still sends only a handful of documents, so the total prompt budget
+    remains well within even 16K-context models (3 samples × 30K chars ≈
+    22K tokens). Override for very small context windows."""
     domain_hint: str | None = None
+    focus: str | None = None
+    """User-facing intent that narrows what the schema should capture.
+
+    ``domain_hint`` describes the *corpus* ("biomedical case reports",
+    "e-commerce product listings"). ``focus`` describes the *intent*
+    ("patient demographics, symptoms, and treatments — skip administrative
+    metadata like authors and publication year"). The LLM sees both as
+    separate instructions. Leaving ``focus`` unset preserves the prior
+    behaviour of proposing a broad, catch-all schema."""
     max_fields: int | None = None
     """Maximum number of fields in the discovered schema. None = no limit."""
     suggested_fields: list[str] | None = None
@@ -146,6 +171,7 @@ class SinglePassDiscovery(BaseModel):
             max_doc_chars=self.max_doc_chars,
             max_fields=self.max_fields,
             suggested_fields=self.suggested_fields,
+            focus=self.focus,
         )
         messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
@@ -231,15 +257,21 @@ class SinglePassDiscovery(BaseModel):
     @staticmethod
     def _build_pydantic_model(
         json_schema: dict[str, Any],
-    ) -> type[BaseModel] | None:
-        """Try to build a Pydantic model from JSON Schema, return None on failure."""
+    ) -> type[BaseModel]:
+        """Build a Pydantic model from a discovered JSON Schema.
+
+        Raises :class:`DiscoveryError` if conversion fails. A discovered
+        schema that cannot be realised as a Pydantic model is not a usable
+        result — downstream extraction would silently be skipped and the
+        user would be left guessing why. Failing loudly gives the user an
+        actionable error message and keeps ``Schema.model`` a reliable
+        non-null value across the discovery path.
+        """
         try:
             return json_schema_to_pydantic(json_schema, "DiscoveredSchema")
         except (SchemaError, ValueError, TypeError) as e:
-            logger.warning(
-                "Could not create Pydantic model from discovered schema. "
-                "Falling back to JSON Schema only: %s",
-                e,
-                exc_info=True,
-            )
-            return None
+            raise DiscoveryError(
+                f"SinglePassDiscovery: failed to build a Pydantic model "
+                f"from the discovered schema. The JSON Schema may contain "
+                f"unsupported or malformed types: {e}"
+            ) from e
